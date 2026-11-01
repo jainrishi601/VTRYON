@@ -23,7 +23,7 @@ export function Launcher() {
     >
       {avatar ? <img src={avatar} alt="" className="w-8 h-8 rounded-full object-cover object-top" />
         : <span className="w-8 h-8 rounded-full bg-ink text-white inline-flex items-center justify-center"><Sparkles size={15} strokeWidth={1.75} /></span>}
-      Need help choosing?
+      <span className="hidden sm:inline">Need help choosing?</span><span className="sm:hidden">Style me</span>
       {e.unread && <span data-testid="launcher-badge" className="absolute top-1 right-2 w-2 h-2 rounded-full bg-accent ring-2 ring-white" aria-label="New crew comments" />}
     </button>
   )
@@ -40,17 +40,23 @@ export function Panel() {
   const [dnaOpen, setDnaOpen] = useState(false)
 
   // A centred modal over the store (full screen on phones): lock the page scroll while it is open.
+  // Compensate the scrollbar so the store behind doesn't jump sideways.
   useEffect(() => {
-    document.body.style.overflow = e.open ? 'hidden' : ''
-    return () => { document.body.style.overflow = '' }
+    if (!e.open) return
+    const b = document.body.style
+    const gap = window.innerWidth - document.documentElement.clientWidth
+    const prev = [b.overflow, b.paddingRight]
+    b.overflow = 'hidden'
+    if (gap > 0) b.paddingRight = `${gap}px`
+    return () => { b.overflow = prev[0]; b.paddingRight = prev[1] }
   }, [e.open])
 
   useEffect(() => { if (e.open) ref.current?.focus() }, [e.open])
   useEffect(() => { if (e.open && e.tab === 'crew') e.markCrewSeen() }, [e.open, e.tab, e.crew, e.markCrewSeen])
 
   return (
-    <div className={`ew fixed inset-0 z-[2147483001] flex items-stretch sm:items-center justify-center sm:p-4 transition-[opacity,visibility] duration-200 ${e.open ? 'opacity-100 visible' : 'opacity-0 invisible pointer-events-none'}`}>
-      <div className="absolute inset-0 bg-black/45 hidden sm:block" onClick={() => e.setOpen(false)} aria-hidden />
+    <div className={`ew fixed inset-0 z-[2147483001] flex items-stretch sm:items-center justify-center sm:p-4 transition-[visibility] duration-300 ${e.open ? 'visible' : 'invisible pointer-events-none'}`}>
+      <div className={`absolute inset-0 bg-black/45 hidden sm:block transition-opacity duration-300 ${e.open ? 'opacity-100' : 'opacity-0'}`} onClick={() => e.setOpen(false)} aria-hidden />
     <aside
       ref={ref}
       tabIndex={-1}
@@ -69,12 +75,14 @@ export function Panel() {
         else if (e.viewer) e.setViewer(null)
         else e.setOpen(false)
       }}
-      className={`relative w-full sm:max-w-[800px] h-[100dvh] sm:h-[90vh] bg-white sm:border border-line sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden outline-none ${e.open ? 'pop-in' : ''}`}
+      className={`relative w-full sm:max-w-[800px] h-[100dvh] sm:h-[90vh] bg-white sm:border border-line sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden outline-none transition-[opacity,translate,scale] ease-[cubic-bezier(0.2,0,0,1)] ${e.open ? 'duration-[320ms] opacity-100 translate-y-0 scale-100' : 'duration-[220ms] opacity-0 max-sm:translate-y-full sm:translate-y-3 sm:scale-[.985]'}`}
     >
       <header className="shrink-0 px-4 sm:px-5 py-3.5 flex items-center gap-2.5 border-b border-line" style={{ paddingTop: 'max(14px, env(safe-area-inset-top))' }}>
-        <span className="text-[20px] sm:text-[22px] font-semibold tracking-[0.18em] leading-none uppercase truncate" data-testid="elara-brand">{e.store?.name ?? 'Stylist'}</span>
+        {/* The wordmark never truncates: on very narrow phones it becomes a monogram and the tabs keep their room. */}
+        <span className="max-[400px]:hidden text-[18px] sm:text-[22px] font-semibold tracking-[0.16em] sm:tracking-[0.18em] leading-none uppercase whitespace-nowrap shrink-0" data-testid="elara-brand">{e.store?.name ?? 'Stylist'}</span>
+        <span className="min-[401px]:hidden w-8 h-8 shrink-0 rounded-full bg-ink text-white text-[14px] font-semibold inline-flex items-center justify-center" aria-label={e.store?.name ?? 'Stylist'}>{(e.store?.name ?? 'S').charAt(0)}</span>
         {!onboarding && (
-          <div role="tablist" className="ml-1 p-0.5 rounded-full bg-surface flex text-[12px] font-semibold" data-testid="elara-tabs">
+          <div role="tablist" className="ml-1 p-0.5 rounded-full bg-surface flex shrink-0 text-[12px] font-semibold" data-testid="elara-tabs">
             {TABS.map(([t, l]) => (
               <button
                 key={t}
@@ -82,7 +90,7 @@ export function Panel() {
                 data-testid={`tab-${t}`}
                 aria-selected={e.tab === t}
                 onClick={() => e.setTab(t)}
-                className={`relative px-3 py-1 rounded-full transition-all duration-150 ${e.tab === t ? 'bg-white shadow-sm text-ink' : 'text-muted hover:text-ink'}`}
+                className={`relative h-8 px-3 rounded-full transition-all duration-150 ${e.tab === t ? 'bg-white shadow-sm text-ink' : 'text-muted hover:text-ink'}`}
               >
                 {l}
                 {t === 'crew' && e.unread && e.tab !== 'crew' && <span className="absolute top-0.5 right-1 w-1.5 h-1.5 rounded-full bg-accent" />}
@@ -109,7 +117,7 @@ export function Panel() {
         {e.tryon && <TryOnSheet />}
         {dnaOpen && <DnaSheet onClose={() => setDnaOpen(false)} />}
         {e.toast && (
-          <div role="status" data-testid="toast" key={e.toast.id} className="absolute left-4 right-4 top-3 z-50 fade-in">
+          <div role="status" data-testid="toast" key={e.toast.id} className="absolute left-4 right-4 top-3 z-50 pop-in pointer-events-none [&_button]:pointer-events-auto">
             <div className="mx-auto max-w-[400px] bg-ink text-white rounded-[14px] px-4 py-3 text-[14px] flex items-center gap-3 shadow-[0_8px_24px_rgba(0,0,0,.2)]">
               <span className="flex-1">{e.toast.text}</span>
               {e.toast.action && <button className="font-medium underline underline-offset-4" onClick={() => { e.toast!.action!.fn(); e.setToast(null) }}>{e.toast.action.label}</button>}
@@ -126,21 +134,22 @@ export function Panel() {
 function Footer({ onDna }: { onDna: () => void }) {
   const e = useElara()
   const [confirm, setConfirm] = useState(false)
+  const link = 'h-8 px-1.5 rounded-md inline-flex items-center hover:text-ink hover:bg-surface transition-colors'
   return (
-    <div className="shrink-0 h-8 px-6 flex items-center justify-center gap-3 text-[11px] text-muted pb-[env(safe-area-inset-bottom)]" data-testid="elara-footer">
+    <div className="shrink-0 min-h-9 px-4 flex flex-wrap items-center justify-center gap-x-1 text-[11px] text-muted pb-[env(safe-area-inset-bottom)]" data-testid="elara-footer">
       {confirm ? (
         <>
-          <span className="text-ink">Delete your photo, looks and style data?</span>
-          <button className="font-medium text-accent underline underline-offset-2" data-testid="forget-confirm" onClick={() => { setConfirm(false); e.forgetMe() }}>Delete</button>
-          <button className="underline underline-offset-2" onClick={() => setConfirm(false)}>Keep</button>
+          <span className="text-ink px-1.5">Delete your photo, looks and style data?</span>
+          <button className={`${link} font-semibold text-accent`} data-testid="forget-confirm" onClick={() => { setConfirm(false); e.forgetMe() }}>Delete</button>
+          <button className={link} onClick={() => setConfirm(false)}>Keep</button>
         </>
       ) : (
         <>
-          <button className="hover:text-ink underline-offset-2 hover:underline" data-testid="dna-open" onClick={onDna}>My Style DNA</button>
+          <button className={link} data-testid="dna-open" onClick={onDna}>My Style DNA</button>
           <span aria-hidden>·</span>
-          <button className="hover:text-ink underline-offset-2 hover:underline" onClick={() => e.downloadData()}>Download my style data</button>
+          <button className={link} onClick={() => e.downloadData()}><span className="sm:hidden">My data</span><span className="hidden sm:inline">Download my style data</span></button>
           <span aria-hidden>·</span>
-          <button className="hover:text-ink underline-offset-2 hover:underline" data-testid="forget-me" onClick={() => setConfirm(true)}>Forget me</button>
+          <button className={link} data-testid="forget-me" onClick={() => setConfirm(true)}>Forget me</button>
         </>
       )}
     </div>
@@ -160,7 +169,7 @@ function BootError() {
   const e = useElara()
   return (
     <div className="flex-1 flex flex-col items-center justify-center gap-5 px-8 text-center">
-      <p className="font-serif text-[28px] leading-tight">Ava can’t reach the studio right now.</p>
+      <p className="font-serif text-[20px] leading-tight">Ava can’t reach the studio right now.</p>
       <button className="h-11 px-6 rounded-full bg-ink text-white text-[14px] font-medium" onClick={() => e.boot()}>Try again</button>
     </div>
   )
@@ -221,7 +230,7 @@ function DnaBody({ d }: { d: DnaExport }) {
   const [W, H, cx, cy, R] = [400, 300, 200, 150, 100]
   return (
     <div className="pb-6" data-testid="dna-graph">
-      {s.name && <p className="font-serif text-[30px] leading-tight" data-testid="dna-sheet-name">{s.name}</p>}
+      {s.name && <p className="font-serif text-[22px] leading-tight" data-testid="dna-sheet-name">{s.name}</p>}
       {s.traits.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">{s.traits.map((t) => <span key={t} className="h-7 px-3 rounded-full bg-surface text-[12px] inline-flex items-center">{t}</span>)}</div>
       )}

@@ -26,6 +26,7 @@ export interface Product {
   vto_ready: boolean
   sizes_in_stock: string[]
   product_url: string
+  default_size?: string // M if in stock, else nearest; "One Size" for bags and accessories
   owned?: boolean // one of the shopper's own TRYON wardrobe pieces (price 0, never in the cart)
 }
 
@@ -36,7 +37,7 @@ export interface Look {
   id: string
   name: string
   why: string
-  items: { slot: Slot; product: Product }[]
+  items: { slot: Slot; product: Product; size?: string | null /* cart default (profile size, else M, else nearest) */ }[]
   total: number
   currency: string
   score: number
@@ -51,6 +52,8 @@ export interface Look {
   render: { status: RenderStatus; image_url: string | null; steps_done: number; steps_total: number; cached: boolean; error: string | null; code: 'no_photo' | 'minor' | 'gender_mismatch' | null }
   video: { status: 'none' | 'pending' | 'ready' | 'failed'; url: string | null }
   before_url: string | null
+  undrawn_pieces?: string[] // titles of the shopper's own pieces in the look: never drawn on the render
+  undrawn_note?: string | null // ready copy for that
 }
 
 export interface Alternative { product: Product; score: number; score_band: ScoreBand; reason: string; price_delta: number; owned?: boolean /* from the shopper's TRYON wardrobe */ }
@@ -68,7 +71,9 @@ export interface Brief {
 
 export interface DnaSummary { vibes: Record<string, number>; colors: Record<string, number>; never: string[]; name: string | null; traits: string[] }
 export interface Profile { brief: Brief | null; dna: DnaSummary; last_occasion: string | null }
-export interface Session { id: string; user_token: string; brief: Brief | null; photo_url: string | null; sample_model_id: string | null; photo_gender: 'women' | 'men' | null; dna: DnaSummary }
+export interface Session { id: string; user_token: string; brief: Brief | null; photo_url: string | null; sample_model_id: string | null; photo_gender: 'women' | 'men' | null; dna: DnaSummary
+  crews?: CrewRef[] // crews this shopper's token owns or joined, most recently active first
+}
 export type ClarifyField = 'wearer' | 'gender' | 'occasion' | 'budget' | 'style' | 'fit' | 'detail'
 export interface ClarifyQuestion { field: ClarifyField; question: string; options: { label: string; value: string }[] }
 export interface Clarify { questions: ClarifyQuestion[] }
@@ -82,13 +87,15 @@ export interface StoreInfo {
 export interface SampleModel { id: string; gender: string; label: string; image_url: string }
 export interface Tile { id: string; vibe: string; product: Product; status: 'pending' | 'ready' | 'failed'; image_url: string | null }
 
+export interface CrewRef { id: string; name: string; occasion: string; is_owner: boolean; looks: number; updated_at: string }
 export interface Member { id: string; display_name: string; avatar_url: string | null; is_owner: boolean; is_you: boolean }
 export interface Comment { id: string; look_id: string; slot: Slot | null; member_id: string; display_name: string; text: string | null; reaction: 'up' | 'down' | 'swap' | null; created_at: string }
 export interface CrewLook {
   look: Look
   renders: { member_id: string; status: string; image_url: string | null }[]
-  verdict: { up: number; down: number; voters: number; label: string }
+  verdict: { up: number; down: number; voters: number; label: string; members?: number; ratio?: number /* 0..1: up / members */ }
   slot_counts: Record<string, { up: number; down: number; swap: number; comments: number }>
+  my_reactions?: Record<string, 'up' | 'down' | 'swap'> // the caller's current reaction per slot ("look" = whole look)
 }
 export interface Crew { id: string; name: string; occasion: string; share_url: string; members: Member[]; looks: CrewLook[]; comments: Comment[]; updated_at: string }
 

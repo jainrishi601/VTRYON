@@ -11,7 +11,7 @@ def load(path=None) -> None:
     p = path or config.DATA_DIR / "products.json"
     PRODUCTS.clear()
     if p.exists():
-        PRODUCTS.update({r["id"]: _sized(r) for r in json.loads(p.read_text())})
+        PRODUCTS.update({r["id"]: {**_sized(r), "default_size": default_size(r)} for r in json.loads(p.read_text())})
 
 
 def _sized(r: dict) -> dict:
@@ -22,6 +22,22 @@ def _sized(r: dict) -> dict:
         if u and "cdn.shopify.com" in u and "width=" not in u:
             r[k] = u + ("&" if "?" in u else "?") + "width=800"
     return r
+
+
+SIZE_ORDER = ("XXS", "XS", "S", "M", "L", "XL", "XXL", "3XL")
+
+
+def default_size(p: dict, wanted: str | None = None) -> str:
+    """The size a cart line starts on: `wanted` (the shopper's profile size) or M, else the nearest size in stock
+    (the larger one on a tie). Bags and accessories are One Size."""
+    stock = p.get("sizes_in_stock") or []
+    if p.get("slot") in ("bag", "accessory", "footwear") or stock == ["One Size"]:
+        return "One Size"
+    want = wanted if wanted in SIZE_ORDER else "M"
+    if not stock or want in stock:
+        return want
+    rank = {s: i for i, s in enumerate(SIZE_ORDER)}
+    return min(stock, key=lambda s: (abs(rank.get(s, 99) - rank[want]), -rank.get(s, 0)))
 
 
 def get(pid: str) -> dict | None:

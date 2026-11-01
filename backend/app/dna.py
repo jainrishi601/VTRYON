@@ -116,13 +116,19 @@ def pick(user_token, vibe: str, color_family: str | None, verdict: str, scope=No
         add_edge(user_token, "never", "vibe", vibe, 0, scope)
 
 
+NEUTRALS = {"white", "ivory", "beige", "cream", "black", "grey", "gray", "navy", "brown", "denim", "neutral"}
+
+
 def representative(vibe: str, gender: str) -> dict | None:
     """The tile piece for a vibe: fixed per (vibe, gender) so prerendered tiles always hit the cache."""
     slot = "one_piece" if gender == "women" else "top"
     c = [p for p in catalog.PRODUCTS.values()
          if p["slot"] == slot and p.get("gender") == gender and vibe in p.get("vibes", []) and p.get("vto_ready", True)]
     # purest first (vibe listed first, fewest vibes), then mid statement, then id for stability
-    c.sort(key=lambda p: (p["vibes"].index(vibe), len(p["vibes"]), abs(p.get("statement_level", 2) - 2), p["id"]))
+    # a "minimal" tile in fuchsia read as a mislabel: minimal prefers a neutral colour family
+    neutral = lambda p: vibe == "minimal" and p.get("color_family") not in NEUTRALS  # noqa: E731
+    c.sort(key=lambda p: (neutral(p), p["vibes"].index(vibe), len(p["vibes"]), abs(p.get("statement_level", 2) - 2),
+                          p["id"]))
     return c[0] if c else None
 
 

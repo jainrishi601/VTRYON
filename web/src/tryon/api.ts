@@ -42,7 +42,7 @@ export interface Profile {
   gender?: Gender
   profession?: string
   age_range?: string
-  sizes?: { region?: string; tops?: string; bottoms?: string; dresses?: string; footwear?: string }
+  sizes?: { region?: string; tops?: string; bottoms?: string; dresses?: string }
   height_cm?: number
   weight_kg?: number
   colors?: string[]
@@ -72,8 +72,8 @@ export interface DnaPage {
 }
 
 export const FAMILY_HEX: Record<string, string> = {
-  white: '#f4f1ea', beige: '#d9c7a7', black: '#141414', grey: '#8c8c8c', green: '#5f7f4a', red: '#c0392b',
-  purple: '#7d5ba6', pink: '#e391ab', brown: '#7a5134', yellow: '#e2b93b', orange: '#e07b39', blue: '#2f5d9b',
+  white: '#f4f1ea', beige: '#d9c7a7', black: '#141414', grey: '#8c8c8c', green: '#6b7a3a', red: '#a83a2c',
+  purple: '#6e5683', pink: '#d99aa8', brown: '#7a5134', yellow: '#d4a017', orange: '#c4703a', blue: '#2f4f7f',
 }
 export const SLOT_LABEL: Record<string, string> = {
   top: 'Tops', bottom: 'Bottoms', one_piece: 'Dresses & sets', layer: 'Layers', footwear: 'Footwear', bag: 'Bags', accessory: 'Accessories',
@@ -84,8 +84,23 @@ export interface LookItem { slot: string; product: { id: string; title: string; 
 export interface TLook {
   id: string; name: string; why: string; tip: string | null; items: LookItem[]; total: number; score: number; score_band: string
   render: { status: 'idle' | 'pending' | 'rendering' | 'ready' | 'failed'; image_url: string | null; error: string | null; code: string | null }
+  parent_look_id?: string | null
+  /** Some pieces are in the look but not drawn (the shopper's own). Backend may send a flag or the piece names. */
+  undrawn_pieces?: boolean | string[]
+  undrawn_note?: string | null // the backend's ready copy for it (preferred)
 }
-export interface Pick { kind: 'casual' | 'formal' | 'trendy'; label: string; feedback: string | null; look: TLook; owned: number; can_try: boolean }
+export interface Pick { kind: 'casual' | 'formal' | 'trendy'; label: string; feedback: string | null; look: TLook; owned: number; can_try: boolean; undrawn_pieces?: boolean | string[] }
+
+/** The owned pieces a try-on leaves as they are in the photo ("Your ivory palazzos"), or [] when it draws everything. */
+export function undrawn(look: TLook, flag?: boolean | string[]): string[] {
+  const f = flag ?? look.undrawn_pieces
+  if (Array.isArray(f) && f.length) return f
+  if (f === false) return []
+  return look.items.filter((it) => it.product.owned && ['top', 'bottom', 'one_piece', 'layer'].includes(it.slot)).map((it) => it.product.title)
+}
+const lc = (s: string) => s.charAt(0).toLowerCase() + s.slice(1)
+export const undrawnNote = (names: string[], note?: string | null) => note ||
+  `Not drawn: your ${names.length > 2 ? names.slice(0, -1).map(lc).join(', ') + ' and ' + lc(names.at(-1)!) : names.map(lc).join(' and ')}. Try-on draws store pieces only, so your photo keeps what you wore in it.`
 export interface PlaySide { product: { id: string; title: string; image_url: string; price: number }; title: string; sub: string }
 export interface PlayPair { id: string; dimension: string; label: string; context: string; question: string; answered: number; a: PlaySide; b: PlaySide }
 

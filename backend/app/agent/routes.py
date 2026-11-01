@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Literal
@@ -34,15 +35,31 @@ def sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
 
+_turns: set[asyncio.Task] = set()  # strong refs: a turn outlives a dropped connection
+
+
 async def _stream(body: ChatIn):
-    try:
-        async for ev, data in loop.turn(body.session_id, body.message, body.look_id, body.attachment_url,
-                                        [a.model_dump() for a in body.answers]):
-            yield sse(ev, data)
-    except Exception:  # last line of defence: the client always gets copy and a closed stream
-        log.exception("chat stream crashed")
-        yield sse("error", {"message": "Something went wrong on my side. Send that again and I'll pick it up."})
-        yield sse("done", {})
+    """The turn runs as its own task, so a closed widget or a page reload mid-turn still finishes and persists the
+    reply (the chat shows it on reopen) instead of leaving a question with no answer."""
+    q: asyncio.Queue[str | None] = asyncio.Queue()
+
+    async def pump():
+        try:
+            async for ev, data in loop.turn(body.session_id, body.message, body.look_id, body.attachment_url,
+                                            [a.model_dump() for a in body.answers]):
+                q.put_nowait(sse(ev, data))
+        except Exception:  # last line of defence: the client always gets copy and a closed stream
+            log.exception("chat stream crashed")
+            q.put_nowait(sse("error", {"message": "Something went wrong on my side. Send that again and I'll pick it up."}))
+            q.put_nowait(sse("done", {}))
+        finally:
+            q.put_nowait(None)
+
+    task = asyncio.create_task(pump())
+    _turns.add(task)
+    task.add_done_callback(_turns.discard)
+    while (frame := await q.get()) is not None:
+        yield frame
 
 
 @router.post("/api/chat")

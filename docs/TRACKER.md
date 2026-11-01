@@ -105,6 +105,8 @@ Test ids map to `docs/TEST_PLAN.md`: `U-*` are unit tests, `E2E-*` are browser t
 
 ## Log
 
+- 11-01 night — Full real-browser QA (docs/QA_REPORT.md) → fixes across agent (auto-render, ≤1 question, wardrobe-aware looks; evals 17/17 ×2, p50 ~9.5 s), backend (single-vote crew + ratio, owner crews from session, share origin, picks invalidation, crops, video resume ≤12 min, orphaned-render resume), widget/store (See-these-on-you strip, render-as-hero cards, models-first dialogs, Studio tap, mobile header, pressed states, scroll/motion, curated home, judge page), TRYON (Linen & Ink, mobile menu/sheet, owned-pieces notes, demo profile). Backend 112 tests, e2e 34 passed.
+
 - 11-01 — Valid Anthropic key. Evals v1 10/15 → v2 15/15 (judge now separates app cards from Ava's words; 2 repair rounds; 'more formal' replaces one piece; minor note once). Live UI run: onboarding → cached DNA tiles → live agent looks + live renders → follow-up in blue. Known UI nits: DNA result panel covers bottom tile buttons on short viewports; crew polling continues after Forget me.
 
 - 11-01 — Integration: backend 69 tests green, e2e 22/22, prerender + seed + live video done. Units left 873. Anthropic key in .env is a `sk-ant-usr` token (401) → agent runs on fallback until a Console API key is added.

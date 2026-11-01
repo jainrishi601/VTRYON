@@ -338,18 +338,69 @@ ITEMS_TOOL = {
 }
 
 
-def _crop(path, box) -> str | None:
-    """Save the item's crop as its own wardrobe image. Boxes that look wrong are ignored (the whole photo is used)."""
-    if len(box or []) != 4:
+# Where each kind of piece sits on a person, as a vertical band (0 = top of the photo). A worn piece's crop is clipped
+# to its band so a sweater crop doesn't carry the trouser waistband; small pieces with no usable box fall back to it.
+BANDS = {"top": (0.0, 0.55), "layer": (0.0, 0.7), "bottom": (0.4, 1.0), "footwear": (0.82, 1.0)}
+ACCESSORY_BANDS = [  # category words -> band, for a small piece whose box is missing or unusable
+    (("earring", "hair", "clip", "pin", "headband", "hat", "cap", "sunglass", "glasses"), (0.0, 0.25)),
+    (("necklace", "chain", "pendant", "choker", "scarf"), (0.1, 0.4)),
+    (("belt",), (0.38, 0.62)),
+]
+SMALL = ("footwear", "accessory", "bag")
+
+
+def crop_box(box, slot: str, category: str = "", others=()) -> tuple[float, float, float, float] | None:
+    """The model's [x, y, w, h] (0-1) -> a padded crop (x0, y0, x1, y1), or None for 'use the whole photo'.
+    Small pieces (shoes, jewellery, bags) never get the whole photo: a tiny box is padded generously, and a missing or
+    broken box falls back to where that piece sits on a person. Worn pieces are clipped to their slot's band, and a
+    top stops where the bottom below it starts. `others`: [(slot, box)] of the other pieces in the same photo."""
+    small = slot in SMALL
+    try:
+        x, y, w, h = (float(v) for v in box)
+        ok = 0 <= x < 1 and 0 <= y < 1 and 0.005 < w <= 1.05 and 0.005 < h <= 1.05
+    except (TypeError, ValueError):
+        ok = False
+    if not ok:
+        if not small:
+            return None
+        cat = (category or "").lower()
+        band = next((b for words, b in ACCESSORY_BANDS if any(wd in cat for wd in words)), None)
+        band = band or BANDS.get(slot) or (0.25, 0.85)
+        return (0.0, band[0], 1.0, band[1])
+    x1, y1 = min(1.0, x + w), min(1.0, y + h)
+    if not small and w * h > 0.92:
         return None
-    x, y, w, h = (float(v) for v in box)
-    if not (0 <= x < 1 and 0 <= y < 1 and 0.08 < w <= 1 and 0.08 < h <= 1) or w * h > 0.92:
+    lo, hi = BANDS.get(slot, (0.0, 1.0))
+    if slot in ("top", "layer"):  # stop above the waistband of a bottom detected below
+        for s2, b2 in others:
+            if s2 == "bottom" and len(b2 or []) == 4 and y < float(b2[1]) < y1:
+                hi = min(hi, float(b2[1]) + 0.02)
+    cy0, cy1 = max(y, lo), min(y1, hi)
+    if cy1 - cy0 >= 0.5 * (y1 - y):  # a worn photo: clip to the band; a flat lay elsewhere keeps the box
+        y, y1 = cy0, cy1
+    # Padding scales with the piece: earrings get room to read, a dress doesn't swallow the room.
+    px, py = max(0.02, 0.35 * (x1 - x)) if small else 0.03, max(0.02, 0.35 * (y1 - y)) if small else 0.03
+    x0, y0, x1, y1 = max(0.0, x - px), max(0.0, y - py), min(1.0, x1 + px), min(1.0, y1 + py)
+    if small:  # at least 12% of the frame each way, so a stud is still a picture
+        (x0, x1), (y0, y1) = _grow(x0, x1), _grow(y0, y1)
+    return (x0, y0, x1, y1)
+
+
+def _grow(a: float, b: float, m: float = 0.12) -> tuple[float, float]:
+    if b - a >= m:
+        return a, b
+    c = min(max((a + b) / 2, m / 2), 1 - m / 2)
+    return c - m / 2, c + m / 2
+
+
+def _crop(path, box, slot: str = "top", category: str = "", others=()) -> str | None:
+    """Save the item's crop as its own wardrobe image (None: use the whole photo)."""
+    cb = crop_box(box, slot, category, others)
+    if not cb:
         return None
     im = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
     W, H = im.size
-    pad = 0.04
-    c = im.crop((int(max(0, x - pad) * W), int(max(0, y - pad) * H), int(min(1, x + w + pad) * W),
-                 int(min(1, y + h + pad) * H)))
+    c = im.crop((int(cb[0] * W), int(cb[1] * H), int(cb[2] * W), int(cb[3] * H)))
     buf = io.BytesIO()
     c.save(buf, "JPEG", quality=90)
     sha = hashlib.sha256(buf.getvalue()).hexdigest()
@@ -373,9 +424,12 @@ async def add_wardrobe_photo(user_token: str, data: bytes) -> list[dict]:
                                           "color_family": "", "pattern": "solid", "fabric": "", "vibes": [],
                                           "formality": 2, "fit": "unknown", "occasions": [], "season": [], "box": []}]
     made = []
+    boxes = [(x.get("slot"), x.get("box")) for x in items]
     for it in items[:8]:
         slot = it.get("slot") if it.get("slot") in WARDROBE_SLOTS else "top"
-        img = (_crop(path, it.get("box")) if len(items) > 1 else None) or url
+        crop = len(items) > 1 or slot in SMALL  # one big piece alone in a photo is the photo
+        img = (_crop(path, it.get("box"), slot, it.get("category") or "", [b for b in boxes if b[1] is not it.get("box")])
+               if crop else None) or url
         wid = new_id("w_", 10)
         ex("insert into wardrobe(id, user_token, image_url, name, slot, category, colors, color_family, pattern, fabric, "
            "vibes, formality, fit, occasions, season, created_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", wid,
@@ -391,7 +445,13 @@ async def add_wardrobe_photo(user_token: str, data: bytes) -> list[dict]:
         if w["color_family"]:
             dna.add_edge(user_token, "owns", "color", w["color_family"], 0.3)
         made.append(w)
+    _wardrobe_changed(user_token)
     return made
+
+
+def _wardrobe_changed(user_token: str) -> None:
+    """Today's Daily Picks were built from the old wardrobe: drop them so the next GET builds them again."""
+    ex("delete from daily_picks where user_id in (select id from users where user_token=?)", user_token)
 
 
 def wardrobe_item(wid: str) -> dict | None:
@@ -417,11 +477,13 @@ def update_wardrobe(user_token: str, wid: str, patch: dict) -> dict:
             if k == "slot" and v not in WARDROBE_SLOTS:
                 continue
             ex(f"update wardrobe set {k}=? where id=?", int(v) if k in ("allow_styling", "formality") else v, wid)
+    _wardrobe_changed(user_token)
     return wardrobe_item(wid)
 
 
 def delete_wardrobe(user_token: str, wid: str) -> None:
     ex("delete from wardrobe where id=? and user_token=?", wid, user_token)
+    _wardrobe_changed(user_token)
 
 
 def as_product(w: dict, gender: str | None) -> dict:
@@ -601,7 +663,10 @@ def _compose(uid: str, rnd: _random.Random) -> list[dict]:
         if not best:
             continue
         used |= {p["id"] for p in best}
-        add = [p for p in extras if p["id"] not in used][:2]
+        add: list[dict] = []
+        for p in extras:  # up to two finishing pieces, one per slot: never two pairs of shoes
+            if p["id"] not in used and p["slot"] not in {a["slot"] for a in add} and len(add) < 2:
+                add.append(p)
         used |= {p["id"] for p in add}
         out.append({"kind": kind, "label": label, "occasion": occasion, "items": best + add})
     return out
@@ -767,5 +832,6 @@ def recent_looks(uid: str, limit=12) -> list[dict]:
     u = q1("select user_token from users where id=?", uid)
     ps = profile(uid).get("session_id") or ""
     rows = q("select l.id from looks l join sessions s on s.id=l.session_id where s.user_token=? and s.id<>? "
-             "and l.parent_look_id is null order by l.created_at desc limit ?", u["user_token"], ps, limit)
+             "and not exists (select 1 from looks c where c.parent_look_id=l.id) "  # latest of each swap chain
+             "order by l.created_at desc limit ?", u["user_token"], ps, limit)
     return [lk for r in rows if (lk := looks.look_json(r["id"]))]

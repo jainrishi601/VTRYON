@@ -46,30 +46,67 @@ export function Ring({ done }: { done: boolean }) {
 }
 
 /** Render image that never blocks: a fixed 3:4 box, a skeleton until it loads, then a blur-to-sharp reveal. */
-export function RevealImg({ src, alt, className = '', onLoad }: { src: string; alt: string; className?: string; onLoad?: () => void }) {
+export function RevealImg({ src, alt, className = '', onLoad, develop }: { src: string; alt: string; className?: string; onLoad?: () => void; develop?: boolean }) {
   const [loaded, setLoaded] = useState(false)
-  useEffect(() => setLoaded(false), [src])
+  const img = useRef<HTMLImageElement>(null)
+  useEffect(() => { setLoaded(!!img.current?.complete && !!img.current.naturalWidth) }, [src]) // cached: no flash
   return (
     <>
       {!loaded && <div className="absolute inset-0 skeleton" />}
       <img
+        ref={img}
         src={abs(src)}
         alt={alt}
+        decoding="async"
         onLoad={() => { setLoaded(true); onLoad?.() }}
-        className={`absolute inset-0 w-full h-full object-cover object-top ${loaded ? 'reveal' : 'opacity-0'} ${className}`}
+        className={`absolute inset-0 w-full h-full object-cover object-top ${loaded ? (develop ? 'develop' : 'reveal') : 'opacity-0'} ${className}`}
       />
     </>
   )
 }
 
-/** The flat product collage: what a look shows when a render is missing or failed. */
+/** A product image in a fixed box: surface placeholder, then a short fade so grids never pop. */
+export function Img({ src, alt = '', className = '' }: { src: string; alt?: string; className?: string }) {
+  const [ok, setOk] = useState(false)
+  return <img src={abs(src)} alt={alt} loading="lazy" decoding="async" onLoad={() => setOk(true)} className={`transition-opacity duration-300 ${ok ? 'opacity-100' : 'opacity-0'} ${className}`} />
+}
+
+/** "1 piece", "3 pieces". */
+export const plural = (n: number, one: string, many = one + 's') => `${n} ${n === 1 ? one : many}`
+
+/** Cart size: the look's own pick (profile size), else the catalogue default, else M / One Size. */
+export const defaultSize = (p: Product, size?: string | null) =>
+  size ?? p.default_size ?? (p.slot === 'bag' || p.slot === 'accessory' ? 'One Size' : !p.sizes_in_stock.length || p.sizes_in_stock.includes('M') ? 'M' : p.sizes_in_stock[Math.floor(p.sizes_in_stock.length / 2)])
+
+/** Wraps an async click so the control shows busy at once and ignores repeat taps until it settles. */
+export function useBusy() {
+  const [busy, setBusy] = useState(false)
+  const live = useRef(true)
+  useEffect(() => () => { live.current = false }, [])
+  const run = (fn: () => unknown) => async () => {
+    if (busy) return
+    setBusy(true)
+    try { await fn() } finally { if (live.current) setBusy(false) }
+  }
+  return [busy, run] as const
+}
+
+/** The flat look: the lead piece (a dress, else the top) full-bleed, the rest as small framed insets. What a look
+ *  shows before it is tried on, or when a render failed. */
 export function Collage({ products }: { products: Product[] }) {
-  const ps = products.slice(0, 4)
+  const rank = (p: Product) => ['one_piece', 'top', 'layer', 'bottom', 'bag', 'accessory'].indexOf(p.slot)
+  const [lead, ...rest] = [...products].sort((x, y) => rank(x) - rank(y))
+  if (!lead) return <div className="absolute inset-0 bg-surface" />
   return (
-    <div className={`absolute inset-0 grid gap-[2px] bg-white ${ps.length > 1 ? 'grid-cols-2' : ''} ${ps.length > 2 ? 'grid-rows-2' : ''}`}>
-      {ps.map((p, i) => (
-        <img key={p.id} src={abs(p.image_url)} alt={p.title} className={`w-full h-full object-cover object-top bg-surface ${ps.length === 3 && i === 0 ? 'row-span-2' : ''}`} />
-      ))}
+    <div className="absolute inset-0 bg-surface">
+      <Img src={lead.image_url} alt={lead.title} className="absolute inset-0 w-full h-full object-cover object-top" />
+      <div className="absolute top-3 right-3 w-[24%] max-w-[88px] flex flex-col gap-2">
+        {rest.slice(0, 3).map((p) => (
+          <div key={p.id} className="w-full aspect-[3/4] rounded-[8px] overflow-hidden bg-surface ring-[3px] ring-white shadow-[0_6px_18px_rgba(0,0,0,.14)]">
+            <Img src={p.image_url} alt={p.title} className={`w-full h-full ${p.owned ? 'object-contain p-1 bg-white' : 'object-cover object-top'}`} />
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -142,31 +179,49 @@ export function Silhouette({ label, sub }: { label: string; sub?: string }) {
   )
 }
 
-export function Sheet({ title, onClose, children, height = '64%', testid }: { title: ReactNode; onClose: () => void; children: ReactNode; height?: string; testid?: string }) {
+/** Run the exit animation, then really close. Returns [closing, close]. */
+export function useExit(onClose: () => void, ms = 200) {
+  const [closing, setClosing] = useState(false)
+  const done = useRef(false)
+  const close = () => {
+    if (done.current) return
+    done.current = true
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return onClose()
+    setClosing(true)
+    setTimeout(onClose, ms)
+  }
+  return [closing, close] as const
+}
+
+export function Sheet({ title, onClose, children, height = '64%', testid, sub }: { title: ReactNode; onClose: () => void; children: ReactNode; height?: string; testid?: string; sub?: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null)
+  const [closing, close] = useExit(onClose)
   useEffect(() => {
     const prev = (ref.current?.getRootNode() as ShadowRoot | Document)?.activeElement as HTMLElement | null
-    ref.current?.focus()
-    return () => prev?.focus?.()
+    ref.current?.focus({ preventScroll: true })
+    return () => prev?.focus?.({ preventScroll: true })
   }, [])
   return (
-    <div className="absolute inset-0 z-40 flex flex-col justify-end" onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }}>
-      <div className="absolute inset-0 bg-black/30 fade-in" onClick={onClose} />
+    <div className="absolute inset-0 z-40 flex flex-col justify-end" onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); close() } }}>
+      <div className={`absolute inset-0 bg-black/35 ${closing ? 'fade-out' : 'fade-in'}`} onClick={close} />
       <div
         ref={ref}
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
         data-testid={testid}
-        className="relative bg-white rounded-t-[20px] sheet-in flex flex-col outline-none shadow-[0_-12px_40px_rgba(0,0,0,.08)]"
+        className={`relative bg-white rounded-t-[20px] flex flex-col outline-none shadow-[0_-12px_40px_rgba(0,0,0,.1)] ${closing ? 'sheet-out' : 'sheet-in'}`}
         style={{ height }}
       >
         <div className="mx-auto mt-2.5 w-9 h-1 rounded-full bg-line" />
-        <div className="flex items-center justify-between px-6 pt-3 pb-3">
-          <h3 className="font-serif text-[26px] leading-tight">{title}</h3>
-          <button aria-label="Close" onClick={onClose} className="w-9 h-9 -mr-2 rounded-full inline-flex items-center justify-center hover:bg-surface"><X size={18} strokeWidth={1.5} /></button>
+        <div className="flex items-start justify-between gap-3 px-5 sm:px-6 pt-3 pb-3">
+          <div className="min-w-0">
+            <h3 className="text-[19px] font-semibold leading-tight">{title}</h3>
+            {sub && <div className="mt-1 text-[13px] text-muted">{sub}</div>}
+          </div>
+          <button aria-label="Close" onClick={close} className="w-9 h-9 -mr-2 -mt-1 shrink-0 rounded-full inline-flex items-center justify-center hover:bg-surface"><X size={18} strokeWidth={1.5} /></button>
         </div>
-        <div className="flex-1 overflow-y-auto thin-scroll px-6 pb-safe">{children}</div>
+        <div className="flex-1 min-h-0 scroll-y px-5 sm:px-6 pb-safe">{children}</div>
       </div>
     </div>
   )
@@ -175,25 +230,26 @@ export function Sheet({ title, onClose, children, height = '64%', testid }: { ti
 /** Centred dialog inside the panel (a bottom sheet on phones): icon + title + subtitle header, scrolling body. */
 export function Dialog({ icon, title, sub, onClose, children, testid }: { icon?: ReactNode; title: ReactNode; sub?: ReactNode; onClose: () => void; children: ReactNode; testid?: string }) {
   const ref = useRef<HTMLDivElement>(null)
+  const [closing, close] = useExit(onClose, 180)
   useEffect(() => {
     const prev = (ref.current?.getRootNode() as ShadowRoot | Document)?.activeElement as HTMLElement | null
-    ref.current?.focus()
-    return () => prev?.focus?.()
+    ref.current?.focus({ preventScroll: true })
+    return () => prev?.focus?.({ preventScroll: true })
   }, [])
   return (
-    <div className="absolute inset-0 z-40 flex items-end sm:items-center justify-center sm:p-4" onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }}>
-      <div className="absolute inset-0 bg-black/55 fade-in" onClick={onClose} />
+    <div className="absolute inset-0 z-40 flex items-end sm:items-center justify-center sm:p-4" onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); close() } }}>
+      <div className={`absolute inset-0 bg-black/55 ${closing ? 'fade-out' : 'fade-in'}`} onClick={close} />
       <div ref={ref} tabIndex={-1} role="dialog" aria-modal="true" data-testid={testid}
-        className="relative w-full sm:max-w-[560px] max-h-[94%] bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col outline-none pop-in">
+        className={`relative w-full sm:max-w-[560px] max-h-[94%] bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col outline-none ${closing ? 'dlg-out' : 'dlg-in'}`}>
         <div className="flex items-start gap-3.5 px-6 pt-6 pb-4">
           {icon && <span className="mt-0.5 shrink-0 text-ink">{icon}</span>}
           <div className="flex-1 min-w-0">
             <h3 className="text-[19px] font-semibold leading-tight">{title}</h3>
             {sub && <p className="mt-1.5 text-[14px] leading-[21px] text-muted">{sub}</p>}
           </div>
-          <button aria-label="Close" onClick={onClose} className="w-8 h-8 -mr-1.5 -mt-1 rounded-full inline-flex items-center justify-center text-muted hover:text-ink hover:bg-surface"><X size={18} strokeWidth={1.75} /></button>
+          <button aria-label="Close" onClick={close} className="w-8 h-8 -mr-1.5 -mt-1 rounded-full inline-flex items-center justify-center text-muted hover:text-ink hover:bg-surface"><X size={18} strokeWidth={1.75} /></button>
         </div>
-        <div className="flex-1 overflow-y-auto thin-scroll px-6 pb-6">{children}</div>
+        <div className="flex-1 min-h-0 scroll-y px-6 pb-6">{children}</div>
       </div>
     </div>
   )

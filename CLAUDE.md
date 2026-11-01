@@ -73,8 +73,8 @@ Env vars live in `.env` at the repo root; `.env.example` lists them. The backend
 4. **Never dead-end a turn.** If Claude fails (timeout, invalid output twice, no key), the deterministic fallback composer answers. An empty reply is a bug.
 
 **Agent behaviour**
-5. **One question card per turn, two questions maximum.** Never re-ask what the brief, Style DNA or history already answers. See `AGENT_SPEC.md` §Clarifier.
-5b. **Never render clothes on a photo of the other gender.** Looks start flat and render only on Try on; `looks.start_render` refuses a gender mismatch, and the try-on sheet offers a matching sample model instead.
+5. **Show first; at most ONE question per turn**, and only for a required missing field (who it's for, gender, occasion, or a budget implied without a number). Never ask vibe/fit/style before showing looks. Never re-ask what the brief, Style DNA or history already answers. See `AGENT_SPEC.md` §Clarifier.
+5b. **Auto-render when a photo/sample model is set; never on the other gender.** Every look presented in a turn starts rendering if the session has a photo or model (no photo → an inline "See these on you" strip). `looks.start_render` refuses a gender mismatch and the try-on sheet offers a matching sample model instead. A render orphaned by a server restart resumes on the next read of the look.
 6. **No regex or keyword tables over user text for meaning.** Claude does intent. (Lookup tables over *catalogue* fields at ingestion are fine.)
 
 **YouCam**

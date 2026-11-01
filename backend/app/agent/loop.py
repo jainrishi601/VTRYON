@@ -12,7 +12,7 @@ import anthropic
 
 from app import config, db, looks, scoring, sessions
 from app.agent import context, fallback, tools
-from app.agent.prompts import ASK_FIRST, FINAL_ROUND_NUDGE, REPAIR_NOTE, SYSTEM_PROMPT
+from app.agent.prompts import FINAL_ROUND_NUDGE, REPAIR_NOTE, SYSTEM_PROMPT
 
 log = logging.getLogger("elara.agent")
 
@@ -160,21 +160,32 @@ async def _deliver(t, out: Out, specs: list[dict], parent: str | None, budget: i
                                   for m in made]})
     mid = persist(t, out)
     yield status("style", "Styling your looks", "done")
-    # Looks arrive flat; one renders only when the shopper taps Try on (saves units on looks nobody opens).
-    # An edit of a look already on the shopper keeps it on: the child re-renders just the changed piece.
+    # With a photo or sample model on file, every look starts rendering now (cached pieces cost 0; youcam.py holds
+    # the session cap). No photo: looks arrive flat and the widget offers "Pick a model". An edit of a look already
+    # on the shopper keeps its model and re-renders just the changed piece.
+    sess = sessions.get_session(t.sid) or {}
     for m in made:
         par = looks.look_json(m["parent_look_id"]) if m["parent_look_id"] else None
         if par and par["render"]["status"] == "ready":
             looks.start_render(m["id"], model_id=par.get("model_id"))
+        elif sess.get("photo_url") and _fits_photo(m, sess):
+            looks.start_render(m["id"])
     yield "looks", {"looks": [looks.look_json(m["id"]) for m in made], "message_id": mid}
     if out.try_next:
         yield "suggest", {"items": out.try_next}
     rendering = [m["id"] for m in made if looks.look_json(m["id"])["render"]["status"] not in looks.TERMINAL]
     if rendering:
-        yield status("render", "Updating it on you")
+        yield status("render", "Rendering on you")
         async for lk in looks.wait_settled(rendering, timeout=RENDER_WAIT):
             yield "look", {"look": lk}
-        yield status("render", "Updated on you", "done")
+        yield status("render", "Ready on you", "done")
+
+
+def _fits_photo(lk: dict, sess: dict) -> bool:
+    """Auto-render only where it can work: a men's look on a women's photo stays flat (the try-on sheet then
+    offers a matching model) instead of every card showing the gender guard."""
+    pg = sessions.photo_gender(sess)
+    return not (lk.get("gender") and pg and lk["gender"] != pg)
 
 
 def apply_wearer(t: context.Turn, w: dict | None) -> None:
@@ -269,7 +280,7 @@ async def _call(messages: list[dict], out: Out, first: list[bool]) -> AsyncItera
 async def _claude(t: context.Turn, out: Out) -> AsyncIterator[Event]:
     messages = [{"role": "user", "content": context.user_content(t)}]
     yield status("understand", "Understanding what you're looking for")
-    first, failures, repairs, n_search, gated = [True], 0, 0, 0, False
+    first, failures, repairs, n_search = [True], 0, 0, 0
     best: tuple[list[dict], dict] | None = None  # valid looks from a failed present_looks, used if repair fails
     rnd = 0
     while rnd < MAX_ROUNDS:
@@ -339,14 +350,6 @@ async def _claude(t: context.Turn, out: Out) -> AsyncIterator[Event]:
         present = next((u for u in uses if u.name == "present_looks"), None)
         grid = next((u for u in uses if u.name == "present_products"), None)
         clarify = next((u for u in uses if u.name == "ask_clarification"), None)
-        # A new request is answered with a question card first (CLAUDE.md rule 5). Enforced here, not just asked.
-        shown = present or grid
-        if shown and not clarify and shown.input.get("request") == "new" and not t.after_card and not gated \
-                and rnd < MAX_ROUNDS - 1:
-            gated = True
-            results[shown.id] = {"content": _json({"ok": False, "errors": [ASK_FIRST]}), "is_error": True}
-            t.trace.append({"gate": "ask_first"})
-            present = grid = None
         if grid and not present:
             inp = grid.input
             t.trace.append({"tool": "present_products", "input": inp})
@@ -398,6 +401,7 @@ async def _claude(t: context.Turn, out: Out) -> AsyncIterator[Event]:
             out.clarify = tools.clean_clarify(q)
             if not out.clarify:
                 raise RuntimeError("empty clarification")
+            out.clarify["questions"] = out.clarify["questions"][:1]  # one question per turn (AGENT_SPEC §3)
             yield "clarify", out.clarify
             out.done = True
             persist(t, out)

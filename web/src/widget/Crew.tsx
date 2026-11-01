@@ -16,7 +16,7 @@ export function CrewTab() {
   if (!e.crew) {
     return e.crewError ? (
       <div className="flex-1 flex flex-col items-center justify-center gap-4 px-8 text-center">
-        <p className="font-serif text-[26px]">Your crew didn’t load.</p>
+        <p className="font-serif text-[22px]">Your crew didn’t load.</p>
         <button className="h-10 px-5 rounded-full border border-ink text-[14px]" onClick={() => e.loadCrew()}>Try again</button>
       </div>
     ) : (
@@ -35,7 +35,7 @@ function CrewEmpty() {
       <div className="flex -space-x-3 mb-8" aria-hidden>
         {['#E7F2EA', '#F1EEE8', '#FBEADC'].map((c, i) => <span key={i} className="w-14 h-14 rounded-full ring-4 ring-white" style={{ background: c }} />)}
       </div>
-      <p className="font-serif text-[32px] leading-[1.1]">Style is better argued. Invite two friends.</p>
+      <p className="font-serif text-[28px] leading-[1.1]">Style is better argued. Invite two friends.</p>
       <p className="mt-3 text-[14px] text-muted max-w-[300px]">Share a look and your crew can react to each piece, see it on themselves and vote.</p>
       {latest ? (
         <button className="mt-7 h-11 px-6 rounded-full bg-ink text-white text-[14px] font-medium" data-testid="crew-share-latest" onClick={() => e.shareLook(latest.id)}>Share “{latest.name}”</button>
@@ -64,10 +64,11 @@ function Join({ crew }: { crew: Crew }) {
     } catch (x) { setErr((x as ApiError).message) } finally { setBusy(false) }
   }
   const first = crew.looks[0]?.look
+  const lookGender = crew.looks.map((l) => l.look.gender).find(Boolean) ?? null // models that can wear the crew's looks
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto thin-scroll px-6 py-6 fade-in" data-testid="crew-join">
+    <div className="flex-1 min-h-0 scroll-y px-6 py-6 fade-in" data-testid="crew-join">
       <p className="label text-accent">Style Crew</p>
-      <h2 className="font-serif text-[36px] leading-[1.05] mt-2">{owner?.display_name ?? 'A friend'} wants your take on {crew.name}.</h2>
+      <h2 className="font-serif text-[30px] leading-[1.05] mt-2">{owner?.display_name ?? 'A friend'} wants your take on {crew.name}.</h2>
       {crew.occasion && <p className="mt-2 text-[14px] text-muted">For {crew.occasion.toLowerCase()} · {crew.looks.length} {crew.looks.length === 1 ? 'look' : 'looks'} to vote on</p>}
       {first && (
         <div className="mt-5 flex gap-2 overflow-x-auto no-scrollbar">
@@ -86,11 +87,11 @@ function Join({ crew }: { crew: Crew }) {
       </label>
       <div className="mt-6">
         <p className="label text-muted">See these looks on you <span className="normal-case tracking-normal">(optional)</span></p>
-        <div className="mt-3 grid grid-cols-5 gap-2">
+        <div className="mt-3 grid grid-cols-5 gap-2 max-w-[420px]">
           <button onClick={() => fileRef.current?.click()} className={`aspect-[3/4] rounded-[10px] border-[1.5px] border-dashed flex flex-col items-center justify-center gap-1 text-[11px] text-muted overflow-hidden relative ${file ? 'border-ink' : 'border-line'}`}>
             {file ? <img src={URL.createObjectURL(file)} alt="Your photo" className="absolute inset-0 w-full h-full object-cover object-top" /> : <><ImageUp size={16} strokeWidth={1.5} />Upload</>}
           </button>
-          {(e.models ?? []).slice(0, 4).map((m) => (
+          {(e.models ?? []).filter((m) => !lookGender || m.gender === lookGender).slice(0, 4).map((m) => (
             <button key={m.id} onClick={() => { setModel(model === m.id ? null : m.id); setFile(null) }} aria-pressed={model === m.id} aria-label={`Use ${m.label}`}
               className={`aspect-[3/4] rounded-[10px] overflow-hidden bg-surface ${model === m.id ? 'ring-2 ring-ink ring-offset-2' : ''}`}>
               <img src={abs(m.image_url)} alt="" className="w-full h-full object-cover object-top" />
@@ -113,10 +114,10 @@ function CrewView({ crew }: { crew: Crew }) {
   const e = useElara()
   const me = crew.members.find((m) => m.is_you)
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto thin-scroll" data-testid="crew-view">
+    <div className="flex-1 min-h-0 scroll-y" data-testid="crew-view">
       <div className="px-6 pt-6 pb-5 border-b border-line">
         <p className="label text-accent">Style Crew{crew.occasion ? ` · ${crew.occasion}` : ''}</p>
-        <h2 className="font-serif text-[34px] leading-[1.05] mt-1.5" data-testid="crew-title">{crew.name}</h2>
+        <h2 className="font-serif text-[28px] leading-[1.05] mt-1.5" data-testid="crew-title">{crew.name}</h2>
         <div className="mt-4 flex items-center gap-3">
           <div className="flex -space-x-2">
             {crew.members.slice(0, 6).map((m) => <span key={m.id} title={m.display_name}><Initials name={m.display_name} src={m.avatar_url} ring /></span>)}
@@ -127,7 +128,7 @@ function CrewView({ crew }: { crew: Crew }) {
         </div>
       </div>
       {crew.looks.length === 0 ? (
-        <div className="py-16 text-center px-8"><p className="font-serif text-[26px]">No looks shared yet.</p><button className="mt-4 h-10 px-5 rounded-full border border-ink text-[14px]" onClick={() => e.setTab('chat')}>Find one in Chat</button></div>
+        <div className="py-16 text-center px-8"><p className="font-serif text-[22px]">No looks shared yet.</p><button className="mt-4 h-10 px-5 rounded-full border border-ink text-[14px]" onClick={() => e.setTab('chat')}>Find one in Chat</button></div>
       ) : (
         <div className="px-4 sm:px-6 py-5 space-y-6">
           {crew.looks.map((cl) => <CrewLookCard key={cl.look.id} cl={cl} crew={crew} meId={me?.id} isOwner={!!me?.is_owner} />)}
@@ -142,15 +143,27 @@ function CrewLookCard({ cl, crew, meId, isOwner }: { cl: CrewLook; crew: Crew; m
   const { look } = cl
   const [open, setOpen] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
+  const [tapping, setTapping] = useState<string | null>(null) // the reaction in flight: shown at once, before the round trip
+  const react = async (slot: string, k: 'up' | 'down' | 'swap') => {
+    if (tapping) return
+    setTapping(`${slot}:${k}`)
+    try { await e.comment(look.id, slot, { reaction: k }) } finally { setTapping(null) }
+  }
   const owner = crew.members.find((m) => m.is_owner)
   const strip = [
     ...(look.render.image_url || !cl.renders.length ? [{ member_id: owner?.id ?? 'owner', status: look.render.status, image_url: look.render.image_url }] : []),
     ...cl.renders.filter((r) => r.member_id !== owner?.id),
   ]
   const nameOf = (id: string) => { const m = crew.members.find((x) => x.id === id); return m ? (m.is_you ? 'You' : m.display_name) : 'Crew' }
-  const mine = (slot: string, reaction: string) => crew.comments.some((c) => c.look_id === look.id && c.slot === slot && c.member_id === meId && c.reaction === reaction)
+  // One reaction per piece counts for me: the latest one I made (older stacked ones stay unhighlighted).
+  const mine = (slot: string, reaction: string) => {
+    if (cl.my_reactions) return cl.my_reactions[slot] === reaction // the server's truth: tap again to undo
+    const last = crew.comments.filter((c) => c.look_id === look.id && c.slot === slot && c.member_id === meId && c.reaction).at(-1)
+    return last?.reaction === reaction
+  }
   const v = cl.verdict
-  const pct = v.voters ? (v.up / Math.max(1, v.up + v.down)) * 100 : 0
+  const ratio = typeof v.ratio === 'number' ? v.ratio : v.up / Math.max(1, v.members ?? crew.members.length)
+  const pct = Math.round(Math.max(0, Math.min(1, ratio)) * 100)
 
   const sendDraft = async (slot: string) => {
     if (!draft.trim()) return
@@ -162,7 +175,7 @@ function CrewLookCard({ cl, crew, meId, isOwner }: { cl: CrewLook; crew: Crew; m
   return (
     <article className="rounded-[14px] border border-line overflow-hidden" data-testid="crew-look">
       <header className="px-4 py-3 flex items-center justify-between gap-3">
-        <h4 className="font-serif text-[24px] leading-tight truncate">{look.name}</h4>
+        <h4 className="font-serif text-[20px] leading-tight truncate">{look.name}</h4>
         <ScoreBadge score={look.score} band={look.score_band} countUp={false} />
       </header>
       <div className="flex gap-2 overflow-x-auto no-scrollbar px-4 pb-3" aria-label="This look on each member">
@@ -198,8 +211,8 @@ function CrewLookCard({ cl, crew, meId, isOwner }: { cl: CrewLook; crew: Crew; m
                 </div>
                 <div className="flex items-center gap-1">
                   {([['up', ThumbsUp, sc.up, 'Love it'], ['down', ThumbsDown, sc.down, 'Not this'], ['swap', RefreshCw, sc.swap, 'Swap it']] as const).map(([k, Icon, n, label]) => (
-                    <button key={k} aria-label={`${label}: ${catName(p.category)}`} aria-pressed={mine(slot, k)} data-testid={`react-${k}-${slot}`} onClick={() => e.comment(look.id, slot as Slot, { reaction: k })}
-                      className={`h-8 min-w-8 px-2 rounded-full inline-flex items-center justify-center gap-1 text-[12px] num transition-colors ${mine(slot, k) ? 'bg-ink text-white' : 'hover:bg-surface text-muted'}`}>
+                    <button key={k} aria-label={`${label}: ${catName(p.category)}`} aria-pressed={mine(slot, k)} data-testid={`react-${k}-${slot}`} onClick={() => react(slot as Slot, k)} aria-busy={tapping === `${slot}:${k}`}
+                      className={`h-9 min-w-9 px-2 rounded-full inline-flex items-center justify-center gap-1 text-[12px] num transition-colors duration-100 ${tapping === `${slot}:${k}` ? (mine(slot, k) ? 'bg-ink/50 text-white' : 'bg-ink text-white') : mine(slot, k) ? 'bg-ink text-white' : 'hover:bg-surface text-muted'}`}>
                       <Icon size={14} strokeWidth={1.75} />{n > 0 && n}
                     </button>
                   ))}
@@ -237,7 +250,9 @@ function CrewLookCard({ cl, crew, meId, isOwner }: { cl: CrewLook; crew: Crew; m
           <span className="font-medium">{v.label || 'No votes yet'}</span>
           <span className="num text-muted">{inr(look.total)}</span>
         </div>
-        <div className="mt-2 h-1.5 rounded-full bg-surface overflow-hidden"><div className="h-full bg-ok transition-all duration-500" style={{ width: `${pct}%` }} /></div>
+        <div className="mt-2 h-1.5 rounded-full bg-surface overflow-hidden" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label="Crew verdict" data-testid="verdict-bar">
+          <div className="h-full bg-ok rounded-full transition-[width] duration-500 ease-out" style={{ width: `${pct}%` }} />
+        </div>
       </div>
       <footer className="px-4 py-3 border-t border-line flex gap-2">
         <AddLookButton look={look} verdict={v.label || undefined} className="flex-1" />

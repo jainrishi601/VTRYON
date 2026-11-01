@@ -17,7 +17,7 @@ export function ProductCard({ p, eager }: { p: Product; eager?: boolean }) {
     <article className="group relative" data-testid="product-card">
       <Link to={`/p/${p.id}`} className="block" aria-label={p.title}>
         <div className="relative aspect-[3/4] bg-surface overflow-hidden">
-          <img src={p.image_url} alt={p.title} loading={eager ? 'eager' : 'lazy'} className="absolute inset-0 w-full h-full object-cover object-top" />
+          <Fade src={p.image_url} alt={p.title} eager={eager} className="absolute inset-0 w-full h-full object-cover object-top" />
           {p.image_url_alt && (
             <img src={p.image_url_alt} alt="" loading="lazy" className="absolute inset-0 w-full h-full object-cover object-top opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
           )}
@@ -64,33 +64,85 @@ function ErrorLine({ onRetry, what = 'the collection' }: { onRetry: () => void; 
 }
 
 // ---------- home ----------
+// ponytail: the demo story is curated by hand (resort women, farewell men); a real store would merchandise this.
+const CDN = 'https://cdn.shopify.com/s/files/1/0270/5129/4854/files/'
+export const HERO = [
+  { id: 'nl-0203', src: `${CDN}NBI035725_1.jpg?v=1724863261`, alt: 'Lillian gathered dress in yellow, on model' },
+  { id: 'nl-0296', src: `${CDN}NBI035754_1.jpg?v=1726512260`, alt: 'Abra embroidered kurta in ivory, on model' },
+]
+const RESORT_WOMEN = ['nl-0203', 'nl-0187', 'nl-0188', 'nl-0175', 'nl-0184', 'nl-0199', 'nl-0170', 'nl-0174']
+const FAREWELL_MEN = ['nl-0294', 'nl-0304', 'nl-0307', 'nl-0322', 'nl-0303', 'nl-0324', 'nl-0326', 'nl-0315']
+const sized = (src: string, w: number) => `${src}&width=${w}`
+
+function useProducts(ids: string[]) {
+  const [items, setItems] = useState<Product[] | null>(null)
+  const [error, setError] = useState(false)
+  const [nonce, setNonce] = useState(0)
+  useEffect(() => {
+    let live = true
+    setError(false)
+    Promise.all(ids.map((id) => get<Product>(`/api/products/${id}`).catch(() => null)))
+      .then((ps) => { if (!live) return; const ok = ps.filter(Boolean) as Product[]; ok.length ? setItems(ok) : setError(true) })
+    return () => { live = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nonce])
+  return { items, error, retry: () => setNonce((n) => n + 1) }
+}
+
+/** Fades an image in once decoded, inside a box that already has its final size (no layout shift). */
+function Fade({ src, alt = '', className = '', eager, sizes }: { src: string; alt?: string; className?: string; eager?: boolean; sizes?: string }) {
+  const [ok, setOk] = useState(false)
+  return <img src={src} alt={alt} sizes={sizes} loading={eager ? 'eager' : 'lazy'} decoding="async" {...(eager ? { fetchpriority: 'high' } : {})} onLoad={() => setOk(true)}
+    ref={(el) => { if (el?.complete && el.naturalWidth && !ok) setOk(true) }}
+    className={`transition-opacity duration-700 ease-out ${ok ? 'opacity-100' : 'opacity-0'} ${className}`} />
+}
+
+const GOA = 'Going to Goa next week with friends, need something breezy, budget around 7k'
+const FAREWELL = 'College farewell outfit for my brother, he’s 20'
+
+function Edit({ eyebrow, title, lede, ids, cta, prompt, testid }: { eyebrow: string; title: React.ReactNode; lede: string; ids: string[]; cta: string; prompt: string; testid: string }) {
+  const { items, error, retry } = useProducts(ids)
+  return (
+    <section className="px-4 md:px-8 mt-24" data-testid={testid}>
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-5 mb-10">
+        <div className="max-w-[640px]">
+          <p className="label text-accent">{eyebrow}</p>
+          <h2 className="font-serif text-[44px] md:text-[56px] leading-[0.98] mt-3">{title}</h2>
+          <p className="mt-4 text-[15px] leading-[24px] text-muted max-w-[480px]">{lede}</p>
+        </div>
+        <button onClick={() => openStylist({ tab: 'chat', message: prompt })} className="self-start md:self-auto shrink-0 h-11 pl-5 pr-4 rounded-full border border-ink text-[14px] font-medium inline-flex items-center gap-2 hover:bg-ink hover:text-white active:scale-[.98] transition-[background-color,color,transform] duration-150">
+          {cta} <ArrowRight size={15} strokeWidth={1.5} />
+        </button>
+      </div>
+      {error ? <ErrorLine onRetry={retry} what="this edit" /> : (
+        <Grid>{items ? items.map((p, i) => <ProductCard key={p.id} p={p} eager={i < 4} />) : ids.map((id) => <CardSkeleton key={id} />)}</Grid>
+      )}
+    </section>
+  )
+}
+
 export function Home() {
-  const women = useApi<Page>('/api/products?gender=women&slot=one_piece&limit=8')
-  const men = useApi<Page>('/api/products?gender=men&slot=top&limit=8')
-  const fresh = useApi<Page>('/api/products?gender=women&limit=8&offset=8')
-  const heroW = women.data?.items[1] ?? women.data?.items[0]
-  const heroM = men.data?.items[0]
   return (
     <>
-      <section className="relative h-[88vh] min-h-[560px] bg-surface overflow-hidden" data-testid="hero">
+      <section className="relative h-[88vh] min-h-[560px] max-h-[980px] bg-[#e9e3da] overflow-hidden" data-testid="hero">
         <div className="absolute inset-0 grid md:grid-cols-2">
-          {[heroW, heroM].map((p, i) => (
-            <div key={i} className={`relative bg-surface ${i === 1 ? 'hidden md:block' : ''}`}>
-              {p && <img src={p.image_url} alt="" className="absolute inset-0 w-full h-full object-cover object-top fadeup" style={{ animationDuration: '1200ms' }} />}
+          {HERO.map((h, i) => (
+            <div key={h.id} className={`relative ${i === 1 ? 'hidden md:block' : ''}`}>
+              <Fade src={sized(h.src, 1400)} alt={h.alt} eager className="absolute inset-0 w-full h-full object-cover object-[50%_18%] scale-[1.01]" />
             </div>
           ))}
         </div>
-        <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/10 to-black/20" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/5 to-black/25" />
         <div className="absolute left-4 right-4 md:left-8 bottom-10 md:bottom-14 text-white max-w-[900px]">
           <p className="label mb-4 fadeup">Resort '26</p>
           <h1 className="font-serif text-[56px] md:text-[88px] leading-[0.95] tracking-[-0.01em] fadeup" style={{ animationDelay: '80ms' }}>
             Salt, linen and <em>long afternoons.</em>
           </h1>
           <div className="mt-8 flex flex-wrap gap-3 fadeup" style={{ animationDelay: '160ms' }}>
-            <Link to="/women" className="h-12 px-7 rounded-full bg-white text-ink text-[14px] font-medium inline-flex items-center hover:bg-white/90 transition-colors">
+            <Link to="/women" className="h-12 px-7 rounded-full bg-white text-ink text-[14px] font-medium inline-flex items-center hover:bg-white/90 active:scale-[.98] transition-[background-color,transform]">
               Shop Women
             </Link>
-            <button data-testid="hero-style-me" onClick={() => openStylist({ tab: 'chat' })} className="h-12 px-7 rounded-full border border-white text-white text-[14px] font-medium hover:bg-white hover:text-ink transition-colors">
+            <button data-testid="hero-style-me" onClick={() => openStylist({ tab: 'chat' })} className="h-12 px-7 rounded-full border border-white text-white text-[14px] font-medium hover:bg-white hover:text-ink active:scale-[.98] transition-[background-color,color,transform]">
               Style me with AI
             </button>
           </div>
@@ -99,27 +151,15 @@ export function Home() {
 
       <CategoryRail />
 
-      <section className="px-4 md:px-8 mt-24">
-        <div className="flex items-end justify-between mb-8">
-          <h2 className="font-serif text-[40px] leading-none">New in</h2>
-          <Link to="/women" className="text-[14px] inline-flex items-center gap-1.5 hover:gap-2.5 transition-all">View all <ArrowRight size={15} strokeWidth={1.5} /></Link>
-        </div>
-        {fresh.error ? <ErrorLine onRetry={fresh.retry} what="new arrivals" /> : (
-          <Grid>{fresh.data ? fresh.data.items.map((p) => <ProductCard key={p.id} p={p} />) : Array.from({ length: 8 }, (_, i) => <CardSkeleton key={i} />)}</Grid>
-        )}
-      </section>
+      <Edit testid="edit-resort" eyebrow="The resort edit · Women" title={<>Breezy, easy, <em>Goa-ready.</em></>}
+        lede="Linen and cotton dresses cut for heat, with room to move. Every piece here can be tried on before it ships."
+        ids={RESORT_WOMEN} cta="Plan a Goa trip with Ava" prompt={GOA} />
 
-      <EditorialBand image={women.data?.items[3]?.image_url ?? heroW?.image_url} image2={men.data?.items[2]?.image_url} />
+      <EditorialBand image={sized(`${CDN}NBI034003_1.jpg?v=1717098363`, 1200)} image2={sized(HERO[1].src, 600)} />
 
-      <section className="px-4 md:px-8 mt-24">
-        <div className="flex items-end justify-between mb-8">
-          <h2 className="font-serif text-[40px] leading-none">For him, for the coast</h2>
-          <Link to="/men" className="text-[14px] inline-flex items-center gap-1.5 hover:gap-2.5 transition-all">Shop Men <ArrowRight size={15} strokeWidth={1.5} /></Link>
-        </div>
-        {men.error ? <ErrorLine onRetry={men.retry} what="this edit" /> : (
-          <Grid>{men.data ? men.data.items.slice(0, 4).map((p) => <ProductCard key={p.id} p={p} />) : Array.from({ length: 4 }, (_, i) => <CardSkeleton key={i} />)}</Grid>
-        )}
-      </section>
+      <Edit testid="edit-farewell" eyebrow="Farewell season · Men" title={<>Sharp, not stiff. <em>For the send-off.</em></>}
+        lede="Crisp shirts and easy kurtas for college farewells and evening do’s. Shopping for him? Ava dresses him, not you."
+        ids={FAREWELL_MEN} cta="Dress my brother for his farewell" prompt={FAREWELL} />
     </>
   )
 }
@@ -154,7 +194,7 @@ function CategoryRail() {
           return (
             <Link key={r.label + r.gender} to={`/c/${r.slot}?gender=${r.gender}`} className="snap-start shrink-0 w-[240px] group">
               <div className="aspect-[4/5] bg-surface overflow-hidden">
-                {t?.img ? <img src={t.img} alt="" loading="lazy" className="w-full h-full object-cover object-top group-hover:scale-[1.03] transition-transform duration-500" /> : <div className="w-full h-full skeleton" />}
+                {t?.img ? <Fade src={t.img} className="w-full h-full object-cover object-top group-hover:scale-[1.03] !transition-[opacity,transform] duration-500" /> : <div className="w-full h-full skeleton" />}
               </div>
               <div className="pt-3 flex items-baseline justify-between">
                 <span className="text-[14px]">{r.label} <span className="text-muted">· {cap(r.gender)}</span></span>
@@ -173,9 +213,11 @@ function EditorialBand({ image, image2 }: { image?: string; image2?: string }) {
     <section className="mt-24 bg-surface">
       <div className="grid md:grid-cols-[1fr_1fr] items-stretch">
         <div className="relative min-h-[520px] md:min-h-[680px] overflow-hidden">
-          {image ? <img src={image} alt="" loading="lazy" className="absolute inset-0 w-full h-full object-cover object-top" /> : <div className="absolute inset-0 skeleton" />}
+          {image ? <Fade src={image} className="absolute inset-0 w-full h-full object-cover object-top" /> : <div className="absolute inset-0 skeleton" />}
           {image2 && (
-            <img src={image2} alt="" loading="lazy" className="hidden md:block absolute right-8 bottom-8 w-[34%] aspect-[3/4] object-cover object-top border-[6px] border-white shadow-[0_20px_40px_rgba(0,0,0,.12)]" />
+            <div className="hidden md:block absolute right-8 bottom-8 w-[34%] aspect-[3/4] bg-surface border-[6px] border-white shadow-[0_20px_40px_rgba(0,0,0,.12)]">
+              <Fade src={image2} className="w-full h-full object-cover object-top" />
+            </div>
           )}
         </div>
         <div className="px-6 md:px-16 py-16 md:py-0 flex flex-col justify-center max-w-[620px]">
@@ -342,6 +384,7 @@ const avatar = () => { try { return localStorage.getItem('elara.avatar') } catch
 export function PDP({ id }: { id: string }) {
   const { data: p, error, retry } = useApi<Product>(`/api/products/${encodeURIComponent(id)}`)
   const [size, setSize] = useState('')
+  useEffect(() => { if (p?.default_size && SIZES.includes(p.default_size)) setSize(p.default_size) }, [p])
   const [needSize, setNeedSize] = useState(false)
   const [added, setAdded] = useState(false)
   const [rail, setRail] = useState<Product[] | null>(null)

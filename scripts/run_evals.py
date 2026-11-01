@@ -1,4 +1,4 @@
-"""Agent evals E1-E15 (AGENT_SPEC §7, TEST_PLAN §2). In-process, renders stubbed, 0 YouCam units.
+"""Agent evals E1-E17 (AGENT_SPEC §7, TEST_PLAN §2). In-process, renders stubbed, 0 YouCam units.
 
     uv run --project backend python scripts/run_evals.py [--only E3,E5] [--note "prompt v2"] [--no-judge]
 
@@ -43,10 +43,18 @@ def seed(sc: dict) -> tuple[str, dict]:
     sid = s["id"]
     if sc.get("brief"):
         db.ex("update sessions set brief=? where id=?", sc["brief"], sid)
+        if not sc.get("unconfirmed"):  # as the widget's onboarding form leaves it: the shopper stated these
+            sessions.confirm(sid, sessions.BASICS)
     if sc.get("photo"):
         url, key = sessions.model_photo(sc["photo"])
         db.ex("update sessions set photo_url=?, src_url=?, sample_model_id=? where id=?", url, key, sc["photo"], sid)
     sess = sessions.get_session(sid)
+    for i, w in enumerate(sc.get("wardrobe") or []):  # TRYON wardrobe pieces, tagged and allowed in styling
+        db.ex("insert into wardrobe(id, user_token, image_url, name, slot, category, colors, color_family, fabric, "
+              "vibes, formality, fit, allow_styling, created_at) values (?,?,?,?,?,?,?,?,?,?,?,?,1,?)",
+              f"w_eval{i}_{sid[-6:]}", sess["user_token"], "/media/wardrobe/eval.jpg", w["name"], w["slot"],
+              w.get("category") or w["slot"], w.get("colors") or [], w.get("color_family"), w.get("fabric"),
+              w.get("vibes") or [], w.get("formality") or 2, w.get("fit"), db.now())
     for edge_type, kind, value, w in sc.get("dna") or []:
         dna.add_edge(sess["user_token"], edge_type, kind, value, w, scope=sessions.scope(sess))
     seeded = {}
@@ -91,6 +99,7 @@ async def run_turn(sid: str, text: str, look_id: str | None, attachment: str | N
         evs.append((lines[0][7:], json.loads(lines[1][6:]), time.monotonic() - t0))
     first = lambda k: next((ts for e, _, ts in evs if e == k), None)  # noqa: E731
     lk = next((d for e, d, _ in evs if e == "looks"), None)
+    first_status = {x["id"]: x["render"]["status"] for x in lk["looks"]} if lk else {}
     final_looks = {}
     for e, d, _ in evs:
         if e == "looks":
@@ -99,7 +108,7 @@ async def run_turn(sid: str, text: str, look_id: str | None, attachment: str | N
             final_looks[d["look"]["id"]] = d["look"]
     return {
         "events": evs, "text": "".join(d["delta"] for e, d, _ in evs if e == "text"),
-        "looks": [final_looks[x["id"]] for x in lk["looks"]] if lk else [],
+        "looks": [final_looks[x["id"]] for x in lk["looks"]] if lk else [], "first_status": first_status,
         "clarifies": [_card(d) for e, d, _ in evs if e == "clarify"],
         "errors": [d for e, d, _ in evs if e == "error"],
         "t_first": first("status"), "t_text": first("text"), "t_looks": first("looks"), "t_total": time.monotonic() - t0,
@@ -116,7 +125,7 @@ def _card(d: dict) -> dict:
     qs = d["questions"]
     return {"question": " / ".join(q["question"] for q in qs),
             "chips": [o["label"] for q in qs for o in q.get("options") or []],
-            "fields": [q.get("field") for q in qs]}
+            "fields": [q.get("field") for q in qs], "n": len(qs)}
 
 
 def mean_formality(lk: dict) -> float:
@@ -203,6 +212,28 @@ def check(exp: dict, last: dict, turns: list[dict], seeded: dict) -> list[str]:
             f.append(f"no query mentions {exp['query_any']}: {qs}")
     if exp.get("text_any") and not any(w.lower() in text.lower() for w in exp["text_any"]):
         f.append(f"text lacks {exp['text_any']}")
+    if exp.get("slot_any") and not any(exp["slot_any"] in {it["slot"] for it in lk["items"]} for lk in lks):
+        f.append(f"no look has a {exp['slot_any']}")
+    if exp.get("formality_range") and lks:
+        lo, hi = exp["formality_range"]
+        m = sum(mean_formality(lk) for lk in lks) / len(lks)
+        if not lo <= m <= hi:
+            f.append(f"mean formality {m:.2f} outside {lo}-{hi}")
+    if exp.get("owned_in_all"):
+        bad = [lk["name"] for lk in lks if not any(it["product"].get("owned") and exp["owned_in_all"].lower()
+                                                   in it["product"]["title"].lower() for it in lk["items"])]
+        if bad or not lks:
+            f.append(f"owned piece missing from: {bad or 'no looks'}")
+    for slot in exp.get("no_store_slot") or []:
+        bad = [it["product"]["title"] for lk in lks for it in lk["items"]
+               if it["slot"] == slot and not it["product"].get("owned")]
+        if bad:
+            f.append(f"store {slot} sold although the shopper owns one: {bad}")
+    if exp.get("auto_render"):
+        starts = set(last["first_status"].values())
+        ends = {lk["render"]["status"] for lk in lks}
+        if not lks or not starts <= {"pending", "rendering"} or ends != {"ready"}:
+            f.append(f"auto-render: started {starts}, ended {ends}")
     if exp.get("minor_no_render"):
         bad = [lk["name"] for lk in lks if lk["render"]["status"] != "failed" or lk["render"]["error"] != looks.MINOR]
         if bad or not lks:
@@ -223,6 +254,11 @@ def voice(turns: list[dict]) -> list[str]:
             f.append("'as an AI'")
         if not (tr["text"].strip() or tr["clarifies"]):
             f.append("empty reply")
+        for q in tr["clarifies"]:
+            if q.get("n", 1) > 1:
+                f.append(f"card asks {q['n']} questions")
+            if set(q.get("fields") or []) - {"wearer", "gender", "occasion", "budget"}:
+                f.append(f"asks a non-required field {q['fields']}")
         if tr["errors"]:
             f.append(f"error event {tr['errors']}")
         if any(x.get("fallback") for x in tr["trace"]) and config.ANTHROPIC_API_KEY:
@@ -306,7 +342,7 @@ def write(results: list[dict], note: str, full: bool) -> None:
     mode = f"{config.AGENT_MODEL}, effort {loop.EFFORT}" if config.ANTHROPIC_API_KEY else "fallback (no API key)"
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     head = ["# Agent eval results\n", f"Latest run: {stamp} · {mode} · **{passed}/{len(results)} pass** · "
-            f"p50 time-to-looks {fmt(p50)} · bar: ≥13/15 and p50 < 12 s\n",
+            f"p50 time-to-looks {fmt(p50)} · bar: ≥15/17 and p50 < 12 s\n",
             "| id | scenario | pass | first event | first text | looks at | total | rounds | notes |",
             "|---|---|---|---|---|---|---|---|---|"]
     for r in results:

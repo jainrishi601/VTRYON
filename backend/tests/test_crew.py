@@ -79,7 +79,7 @@ def test_crew4_5_comments_reactions_verdict(c):
     cl = c.get(f"/api/crews/{cid}").json()["looks"][0]
     assert cl["slot_counts"]["bottom"] == {"up": 1, "down": 0, "swap": 0, "comments": 1}
     assert cl["slot_counts"]["top"] == {"up": 0, "down": 1, "swap": 1, "comments": 1}
-    assert cl["verdict"] == {"up": 2, "down": 1, "voters": 3, "label": "2 of 4 love it"}
+    assert cl["verdict"] == {"up": 2, "down": 1, "voters": 3, "members": 4, "ratio": 0.5, "label": "2 of 4 love it"}
     crew = c.get(f"/api/crews/{cid}").json()
     assert len(crew["comments"]) == 4 and crew["updated_at"] == crew["comments"][-1]["created_at"]
     tok = c.get(f"/api/session/{sid}").json()["user_token"]
@@ -98,3 +98,79 @@ def test_crew6_share_png(c, fmt, size):
     im = Image.open(io.BytesIO(r.content))
     assert im.format == "PNG" and im.size == size
     assert c.get(f"/api/crews/{cid}/share.png", params={"look_id": "lk_nope"}).status_code == 404
+
+
+def test_crew7_one_reaction_per_member_per_piece(c):
+    """T5/T6: same reaction again toggles off, a different one replaces it, comments stay many; the verdict counts
+    members, not taps."""
+    sid = new_session(c)
+    lk = look(c, sid)
+    cid = c.post("/api/crews", json={"session_id": sid, "look_id": lk["id"]}).json()["id"]
+    toks = [c.post(f"/api/crews/{cid}/join", json={"display_name": n}).json()["member_token"] for n in ("Meera", "Ana")]
+    post = lambda tok, **kw: c.post(f"/api/crews/{cid}/comments", json={"member_token": tok, "look_id": lk["id"], **kw})  # noqa: E731
+    get = lambda tok=None: c.get(f"/api/crews/{cid}", params={"member_token": tok} if tok else {}).json()["looks"][0]  # noqa: E731
+    for _ in range(4):  # four taps on "Love it" from one friend = on, off, on, off
+        post(toks[0], slot="top", reaction="up")
+    assert get()["slot_counts"]["top"]["up"] == 0 and get()["verdict"]["label"] == "No votes yet"
+    post(toks[0], slot="top", reaction="up")
+    r = post(toks[0], slot="top", reaction="down").json()  # replaces
+    assert r["reaction"] == "down"
+    cl = get(toks[0])
+    assert cl["slot_counts"]["top"] == {"up": 0, "down": 1, "swap": 0, "comments": 0}
+    assert cl["my_reactions"] == {"top": "down"}
+    off = post(toks[0], slot="top", reaction="down").json()
+    assert off["removed"] and off["reaction"] is None and get(toks[0])["my_reactions"] == {}
+    # comments are many; a comment carrying the same reaction keeps it on (and keeps its text when replaced)
+    post(toks[1], slot="bottom", text="love these", reaction="up")
+    post(toks[1], slot="bottom", text="the colour too", reaction="up")
+    post(toks[1], slot="bottom", text="no reaction, just words")
+    post(toks[1], reaction="up")
+    post(toks[0], reaction="up")
+    post(toks[0], reaction="up")  # toggled off again
+    cl = get()
+    assert cl["slot_counts"]["bottom"] == {"up": 1, "down": 0, "swap": 0, "comments": 3}
+    assert cl["verdict"] == {"up": 1, "down": 0, "voters": 1, "members": 3, "ratio": 0.333, "label": "1 of 3 love it"}
+    texts = [x["text"] for x in c.get(f"/api/crews/{cid}").json()["comments"] if x["text"]]
+    assert texts == ["love these", "the colour too", "no reaction, just words"]
+
+
+def test_crew8_session_lists_crews_owned_and_joined(c):
+    """T7: the owner finds the crew from the session (no localStorage); a joiner with a user_token too; a look shared
+    from a new chat lands in the same standing crew."""
+    sid = new_session(c)
+    tok = c.get(f"/api/session/{sid}").json()["user_token"]
+    assert c.get(f"/api/session/{sid}").json()["crews"] == []
+    cid = c.post("/api/crews", json={"session_id": sid, "look_id": look(c, sid)["id"]}).json()["id"]
+    crews = c.get(f"/api/session/{sid}").json()["crews"]
+    assert [(x["id"], x["is_owner"], x["looks"]) for x in crews] == [(cid, True, 1)]
+    fresh = c.post("/api/session", json={"user_token": tok}).json()
+    assert [x["id"] for x in fresh["crews"]] == [cid]
+    assert c.post("/api/crews", json={"session_id": fresh["session_id"], "look_id": look(c, fresh["session_id"])["id"]}
+                  ).json()["id"] == cid
+    friend = c.post("/api/session", json={}).json()["user_token"]
+    r = c.post(f"/api/crews/{cid}/join", json={"display_name": "Meera", "user_token": friend}).json()
+    assert r["member_token"] == friend
+    again = c.post(f"/api/crews/{cid}/join", json={"display_name": "Meera", "user_token": friend}).json()
+    assert len(again["crew"]["members"]) == 2
+    mine = c.get("/api/crews", params={"user_token": friend}).json()["crews"]
+    assert [(x["id"], x["is_owner"]) for x in mine] == [(cid, False)]
+
+
+def test_crew9_share_url_uses_web_origin(c, monkeypatch):
+    """T8: share links point at the web app the shopper is on, not a hard-coded dev port."""
+    from app import config
+    sid = new_session(c)
+    lk = look(c, sid)
+    cr = c.post("/api/crews", json={"session_id": sid, "look_id": lk["id"]}).json()
+    assert cr["share_url"] == f"http://localhost:5180/?crew={cr['id']}"
+    got = c.get(f"/api/crews/{cr['id']}", headers={"referer": "http://localhost:5199/tryon/x?y=1"}).json()
+    assert got["share_url"] == f"http://localhost:5199/?crew={cr['id']}"
+    got = c.get(f"/api/crews/{cr['id']}", headers={"origin": "https://shop.test"}).json()
+    assert got["share_url"] == f"https://shop.test/?crew={cr['id']}"
+    monkeypatch.setattr(config, "WEB_URL", "https://northline.test")
+    assert c.get(f"/api/crews/{cr['id']}", headers={"origin": "https://shop.test"}).json()["share_url"] == (
+        f"https://northline.test/?crew={cr['id']}")
+    assert config.web_url("not a url", None) == "https://northline.test"
+    monkeypatch.setattr(config, "WEB_URL", "")
+    monkeypatch.setattr(config, "PUBLIC_BASE_URL", "https://api.test")
+    assert config.web_url(None, None) == "https://api.test"

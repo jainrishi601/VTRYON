@@ -21,6 +21,7 @@ async def lifespan(_app):
     init_db()
     if not catalog.PRODUCTS:
         catalog.load()
+    looks.resume_videos()  # clips still `pending` from before a restart keep polling their paid task
     yield
 
 
@@ -110,6 +111,7 @@ class CrewIn(BaseModel):
 class JoinIn(BaseModel):
     display_name: str = Field(min_length=1, max_length=40)
     sample_model_id: str | None = None
+    user_token: str | None = None  # the joiner's shopper token: membership keyed on it, so it shows in their session
 
 
 class CrewLookIn(BaseModel):
@@ -133,6 +135,11 @@ def _session(sid: str) -> dict:
 
 def _look(look_id: str) -> dict:
     return looks.look_json(look_id) or err(404, "look_not_found", "That look is no longer available.")
+
+
+def _web(request: Request) -> str:
+    """The web app origin for share links (WEB_URL, else the browser's Origin/Referer, else PUBLIC_BASE_URL)."""
+    return config.web_url(request.headers.get("origin"), request.headers.get("referer"))
 
 
 async def _photo_from(request: Request, json_model=SampleIn) -> tuple[dict, tuple[str, str] | None]:
@@ -183,12 +190,13 @@ async def models():
 @app.post("/api/session")
 async def create_session(body: SessionIn):
     s, returning, profile = sessions.create(body.user_token)
-    return {"session_id": s["id"], "user_token": s["user_token"], "returning": returning, "profile": profile}
+    return {"session_id": s["id"], "user_token": s["user_token"], "returning": returning, "profile": profile,
+            "crews": crew.for_token(s["user_token"])}
 
 
 @app.get("/api/session/{sid}")
 async def get_session(sid: str):
-    return sessions.session_json(_session(sid))
+    return sessions.session_json(_session(sid))  # includes `crews`: the crews this shopper owns or joined
 
 
 @app.patch("/api/session/{sid}")
@@ -242,6 +250,7 @@ async def pick(sid: str, body: PickIn):
 
 @app.get("/api/looks/{lid}")
 async def get_look(lid: str):
+    looks.resume_video(lid)  # a `pending` clip whose poller died (restart, timeout window) polls its task again
     return _look(lid)
 
 
@@ -310,21 +319,27 @@ async def feedback(lid: str, body: FeedbackIn):
 
 # Style Crew -------------------------------------------------------------------------------------------------------
 
-def _crew(cid: str, token: str | None = None) -> dict:
-    return crew.crew_json(cid, token) or err(404, "crew_not_found", "That crew link has expired.")
+def _crew(cid: str, token: str | None = None, request: Request | None = None) -> dict:
+    return crew.crew_json(cid, token, _web(request) if request else None) or err(
+        404, "crew_not_found", "That crew link has expired.")
+
+
+@app.get("/api/crews")
+async def my_crews(user_token: str):
+    return {"crews": crew.for_token(user_token)}
 
 
 @app.post("/api/crews")
-async def create_crew(body: CrewIn):
+async def create_crew(body: CrewIn, request: Request):
     s = _session(body.session_id)
     _look(body.look_id)
     cid = crew.create_or_reuse(body.session_id, body.look_id, body.name, body.display_name)
-    return _crew(cid, s["user_token"])
+    return _crew(cid, s["user_token"], request)
 
 
 @app.get("/api/crews/{cid}")
-async def get_crew(cid: str, member_token: str | None = None, since: str | None = None):
-    return _crew(cid, member_token)  # ponytail: always the full state; `since` is accepted for the poller
+async def get_crew(cid: str, request: Request, member_token: str | None = None, since: str | None = None):
+    return _crew(cid, member_token, request)  # ponytail: always the full state; `since` is accepted for the poller
 
 
 @app.post("/api/crews/{cid}/join")
@@ -332,18 +347,18 @@ async def join_crew(cid: str, request: Request):
     _crew(cid)
     fields, photo = await _photo_from(request, JoinIn)
     name = (fields.get("display_name") or "").strip() or err(422, "invalid_request", "Add your name to join.")
-    m = crew.join(cid, name, *(photo or (None, None)))
-    return {"member_token": m["member_token"], "crew": _crew(cid, m["member_token"])}
+    m = crew.join(cid, name, *(photo or (None, None)), user_token=(fields.get("user_token") or "").strip() or None)
+    return {"member_token": m["member_token"], "crew": _crew(cid, m["member_token"], request)}
 
 
 @app.post("/api/crews/{cid}/looks")
-async def crew_add_look(cid: str, body: CrewLookIn):
+async def crew_add_look(cid: str, body: CrewLookIn, request: Request):
     _crew(cid)
     q1("select 1 from crew_members where crew_id=? and member_token=?", cid, body.member_token) or err(
         403, "not_a_member", "Join the crew to add looks.")
     _look(body.look_id)
     crew.add_look(cid, body.look_id)
-    return _crew(cid, body.member_token)
+    return _crew(cid, body.member_token, request)
 
 
 @app.post("/api/crews/{cid}/comments")
@@ -357,11 +372,11 @@ async def crew_comment(cid: str, body: CommentIn):
 
 
 @app.get("/api/crews/{cid}/share.png")
-async def share_png(cid: str, look_id: str, format: Literal["square", "story"] = "square"):
+async def share_png(cid: str, look_id: str, request: Request, format: Literal["square", "story"] = "square"):
     _crew(cid)
     q1("select 1 from crew_looks where crew_id=? and look_id=?", cid, look_id) or err(
         404, "look_not_found", "That look isn't in this crew.")
-    return FileResponse(await crew.share_png(cid, look_id, format), media_type="image/png")
+    return FileResponse(await crew.share_png(cid, look_id, format, _web(request)), media_type="image/png")
 
 
 # Taste graph and privacy ------------------------------------------------------------------------------------------

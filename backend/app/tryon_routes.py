@@ -219,14 +219,21 @@ async def forget(kind: str, value: str, authorization: str | None = Header(None)
 
 # ------------------------------------------------------------------------------------------- daily picks, style play
 
+def _daily(u: dict, picks: list[dict]) -> dict:
+    # wardrobe_items: how many pieces the shopper owns; the "Add my wardrobe" banner is for 0 only
+    return {"day": tryon._today(), "picks": picks, "wardrobe_items": len(tryon.wardrobe(u["user_token"]))}
+
+
 @router.get("/api/me/daily")
 async def daily(authorization: str | None = Header(None)):
-    return {"day": tryon._today(), "picks": await tryon.daily(_me(authorization)["id"])}
+    u = _me(authorization)
+    return _daily(u, await tryon.daily(u["id"]))  # rebuilt after any wardrobe add/edit/delete
 
 
 @router.post("/api/me/daily/regenerate")
 async def daily_regenerate(authorization: str | None = Header(None)):
-    return {"day": tryon._today(), "picks": await tryon.daily(_me(authorization)["id"], regenerate=True)}
+    u = _me(authorization)
+    return _daily(u, await tryon.daily(u["id"], regenerate=True))
 
 
 @router.post("/api/me/daily/{look_id}/feedback")

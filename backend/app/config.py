@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 BACKEND = ROOT / "backend"
@@ -36,6 +37,7 @@ def flag(key: str) -> bool:
 YOUCAM_API_KEY = env("YOUCAM_API_KEY")
 ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY")
 PUBLIC_BASE_URL = env("PUBLIC_BASE_URL").rstrip("/")
+WEB_URL = env("WEB_URL").rstrip("/")  # where shoppers open the store (share links); empty = derive per request
 YOUCAM_DEMO_MODE = flag("YOUCAM_DEMO_MODE")
 RENDER_STUB = flag("RENDER_STUB")
 
@@ -55,7 +57,8 @@ SESSION_RENDER_CAP = 20  # live (uncached) cloth-v4 calls per session
 GLOBAL_CONCURRENCY = 8
 SESSION_CONCURRENCY = 4
 TASK_TIMEOUT = 60
-VIDEO_TIMEOUT = 420  # ponytail: YouCam i2v took >180 s live (11-01); a retry resumes the same task_id
+VIDEO_TIMEOUT = 720  # one polling window; YouCam i2v took 277 s and >420 s live (11-01). After it the look stays
+# `pending` and the next GET resumes polling the same paid task_id; only a real YouCam error marks it failed.
 POLL_S = 2.0
 BACKOFF = (2, 4, 8)
 RESULT_TTL_S = 105 * 60  # YouCam result URLs live 2 h; treat them as stale a bit earlier
@@ -82,3 +85,13 @@ def media_path(url: str) -> Path:
 
 def public_url(url: str) -> str | None:
     return f"{PUBLIC_BASE_URL}{url}" if PUBLIC_BASE_URL else None
+
+
+def web_url(origin: str | None = None, referer: str | None = None) -> str:
+    """The web app's origin for share links: WEB_URL, else the browser's Origin/Referer, else PUBLIC_BASE_URL,
+    else the dev server."""
+    for u in (WEB_URL, origin, referer):
+        p = urlsplit(u or "")
+        if p.scheme in ("http", "https") and p.netloc:
+            return f"{p.scheme}://{p.netloc}"
+    return PUBLIC_BASE_URL or "http://localhost:5180"

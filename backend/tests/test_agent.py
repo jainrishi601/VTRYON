@@ -86,7 +86,7 @@ def test_validator(app_client):  # U-AG-2
     t.budget = top["price"] + bottom["price"]
 
     def check(*looks, **extra):
-        inp = {"message": "m", "looks": [{"name": f"N{i}", "why": "w", "item_refs": refs, "over_budget": ob}
+        inp = {"message": "m", "looks": [{"name": f"N{i}", "why": "Easy linen for the heat", "item_refs": refs, "over_budget": ob}
                                           for i, (refs, ob) in enumerate(looks)], "modifies_look_id": None,
                "budget_per_look": None, "wearer_is_minor": False, **extra}
         checked, errs = tools.validate(t, inp)
@@ -107,30 +107,59 @@ def test_validator(app_client):  # U-AG-2
     assert any("at most" in e for e in check(*[([r["top"], r["bottom"]], False)] * 4))
 
 
-def test_looks_arrive_flat_and_render_on_tap(app_client, monkeypatch):  # U-AG-3
+def _fake_renders(monkeypatch) -> list:
     calls = []
 
     async def fake_run(steps, src, session_id=None, on_step=None):
         for i, _ in enumerate(steps):
             calls.append(i)
+            await asyncio.sleep(0.01)
             if on_step:
                 on_step(i + 1, None)
         return TryOnResult("/media/stub/x.jpg", "", f"k{len(calls)}", False, 0, 50), False
 
     monkeypatch.setattr(renders, "run", fake_run)
+    return calls
+
+
+def test_looks_auto_render_when_a_photo_is_set(app_client, monkeypatch):  # U-AG-3, QA finding A
+    calls = _fake_renders(monkeypatch)
     sid = new_session(BEACH, photo=True)
     evs = events(app_client.post("/api/chat", json={"session_id": sid, "message": "beach looks please"}))
     kinds = [e for e, _ in evs]
-    assert kinds[-1] == "done" and kinds.count("done") == 1 and "look" not in kinds
+    assert kinds[-1] == "done" and kinds.count("done") == 1
     lks = next(d for e, d in evs if e == "looks")["looks"]
-    assert {lk["render"]["status"] for lk in lks} == {"idle"} and not calls  # nothing spent until a tap
-    lid = lks[0]["id"]
-    assert app_client.post(f"/api/looks/{lid}/render", json={}).status_code == 200
-    for _ in range(50):
-        if app_client.get(f"/api/looks/{lid}").json()["render"]["status"] == "ready":
+    assert {lk["render"]["status"] for lk in lks} <= {"pending", "rendering"} and len(lks) >= 2
+    # the stream keeps sending `look` updates and closes only once every render settled
+    final = {d["look"]["id"]: d["look"]["render"]["status"] for e, d in evs if e == "look"}
+    assert final == {lk["id"]: "ready" for lk in lks} and calls
+    assert kinds.index("looks") < kinds.index("look") < kinds.index("done")
+
+
+def test_looks_arrive_flat_without_a_photo_then_render_on_a_picked_model(app_client, monkeypatch):
+    calls = _fake_renders(monkeypatch)
+    sid = new_session(BEACH)
+    evs = events(app_client.post("/api/chat", json={"session_id": sid, "message": "beach looks please"}))
+    lks = next(d for e, d in evs if e == "looks")["looks"]
+    assert {lk["render"]["status"] for lk in lks} == {"idle"} and "look" not in [e for e, _ in evs] and not calls
+    # the widget's "Pick a model" strip: set a sample model, then start every look
+    assert app_client.post(f"/api/session/{sid}/photo", json={"sample_model_id": "w1"}).status_code == 200
+    for lk in lks:
+        assert app_client.post(f"/api/looks/{lk['id']}/render", json={}).status_code == 200
+    for _ in range(100):
+        if all(app_client.get(f"/api/looks/{lk['id']}").json()["render"]["status"] == "ready" for lk in lks):
             break
         asyncio.run(asyncio.sleep(0.02))
-    assert app_client.get(f"/api/looks/{lid}").json()["render"]["status"] == "ready" and calls
+    assert all(app_client.get(f"/api/looks/{lk['id']}").json()["render"]["status"] == "ready" for lk in lks)
+
+
+def test_a_mens_look_does_not_auto_render_on_a_womens_photo(app_client, monkeypatch):
+    calls = _fake_renders(monkeypatch)
+    sid = new_session({"for": "other", "recipient": {"relation": "brother", "gender": "men"},
+                       "occasion": "Farewell", "budget_max": 20000}, photo=True)
+    evs = events(app_client.post("/api/chat", json={"session_id": sid, "message": "farewell looks"}))
+    lks = next(d for e, d in evs if e == "looks")["looks"]
+    assert {lk["render"]["status"] for lk in lks} == {"idle"} and not calls
 
 
 def test_unknown_session_gets_error_and_done(app_client):
@@ -205,9 +234,9 @@ def test_scripted_claude_search_repair_present(app_client, monkeypatch):
         res = _results(kw) if bad else state["res"]
         state["res"] = res
         tops, bottoms = [x["ref"] for x in res["tu_1"]["results"]], [x["ref"] for x in res["tu_2"]["results"]]
-        looks_ = [{"name": "Sunset Linen", "item_refs": [tops[0], bottoms[0]], "why": "w", "over_budget": True},
+        looks_ = [{"name": "Sunset Linen", "item_refs": [tops[0], bottoms[0]], "why": "Easy linen for the heat", "over_budget": True},
                   {"name": "Monsoon Ink", "item_refs": [tops[1], bottoms[1]] + ([tops[2]] if bad else []),
-                   "why": "w", "over_budget": True}]
+                   "why": "Easy linen for the heat", "over_budget": True}]
         return _msg(_use(3 + bad, "present_looks", message="Two easy linen looks for you.", looks=looks_,
                          modifies_look_id=None, budget_per_look=None, wearer_is_minor=False))
 
@@ -256,36 +285,55 @@ def test_claude_failure_falls_back(app_client, monkeypatch):
     assert any(e == "status" and d["id"] == "understand" and d["state"] == "done" for e, d in evs)
 
 
-def test_new_request_must_ask_first(app_client, monkeypatch):
-    """A new request presented without the question card is sent back; Claude then asks; the answer unlocks it."""
-    def search(kw):
-        return _msg(_use(1, "search_catalog", **{**_search("top"), "for_whom": "shopper"}))
-
-    def grid(kw, i):
-        refs = [x["ref"] for x in state.setdefault("res", _results(kw))["tu_1"]["results"]][:4]
-        return _msg(_use(i, "present_products", message="Office shirts.", product_refs=refs, request="new",
-                         try_next=[], wearer={"for": "self", "relation": "", "gender": "women", "occasion": ""}))
-
+def test_a_card_carries_one_question(app_client, monkeypatch):
+    """At most one question per turn (AGENT_SPEC §3): a second question Claude adds is dropped."""
     def ask(kw):
-        gate = kw["messages"][-1]["content"][0]
-        assert gate["is_error"] and "ask first" in gate["content"]
-        return _msg(_use(3, "ask_clarification", questions=[
-            {"field": "budget", "question": "Budget per shirt?", "options": [
-                {"label": "Under ₹2,000", "value": "2000"}, {"label": "No limit", "value": "none"}]}]))
+        assert "request" not in kw["tools"][1]["input_schema"]["properties"]  # the old ask-first gate is gone
+        return _msg(_use(1, "ask_clarification", questions=[
+            {"field": "gender", "question": "Should I shop women's or men's?", "options": [
+                {"label": "Women", "value": "women"}, {"label": "Men", "value": "men"}]},
+            {"field": "budget", "question": "Budget per look?", "options": [
+                {"label": "Under ₹6,000", "value": "6000"}, {"label": "No limit", "value": "none"}]}]))
+
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test")
+    monkeypatch.setattr(loop, "_client", FakeClaude([ask]))
+    sid = new_session()
+    evs = events(app_client.post("/api/chat", json={"session_id": sid, "message": "something for a wedding"}))
+    card = next(d for e, d in evs if e == "clarify")
+    assert [q["field"] for q in card["questions"]] == ["gender"]
+
+
+def test_a_look_can_be_built_around_an_owned_piece(app_client, monkeypatch):
+    """QA T1: a wardrobe piece the shopper names goes into the look by ref: ₹0, theirs, not drawn by YouCam."""
+    sid = new_session(BEACH, photo=True)
+    tok = sessions.get_session(sid)["user_token"]
+    db.ex("insert into wardrobe(id, user_token, image_url, name, slot, category, colors, color_family, fabric, vibes, "
+          "formality, fit, allow_styling, created_at) values (?,?,?,?,?,?,?,?,?,?,?,?,1,?)", "w_palazzo", tok,
+          "/media/wardrobe/x.jpg", "Ivory palazzo trousers", "bottom", "palazzo", ["ivory"], "ivory", "linen",
+          ["minimal"], 2, "relaxed", db.now())
+    top = _pick("women", "top")
+
+    def search(kw):
+        block = kw["messages"][0]["content"][-1]["text"]
+        state["own"] = next(w.split()[1] for w in block.split("wardrobe")[1].split(": ", 1)[1].split("; "))
+        return _msg(_use(1, "search_catalog", **{**_search("top"), "for_whom": "shopper", "query": top["title"]}))
+
+    def present(kw):
+        tref = next(x["ref"] for x in _results(kw)["tu_1"]["results"] if x["title"] == top["title"])
+        return _msg(_use(2, "present_looks", message="Built around your palazzos.", looks=[
+            {"name": "Ivory Brunch", "item_refs": [tref, state["own"]], "why": "Easy linen for the heat", "tip": "", "over_budget": False}],
+            modifies_look_id=None, budget_per_look=None, wearer_is_minor=False, try_next=[],
+            wearer={"for": "self", "relation": "", "gender": "women", "occasion": "Brunch"}))
 
     state = {}
+    _fake_renders(monkeypatch)
     monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test")
-    monkeypatch.setattr(loop, "_client", FakeClaude([search, lambda kw: grid(kw, 2), ask]))
-    sid = new_session(BEACH)
-    evs = events(app_client.post("/api/chat", json={"session_id": sid, "message": "shirts for office"}))
-    kinds = [e for e, _ in evs]
-    assert "clarify" in kinds and "products" not in kinds and {"gate": "ask_first"} in loop.TRACES[sid]
-    # the answer to the card unlocks the grid, still marked "new"
-    state.clear()
-    monkeypatch.setattr(loop, "_client", FakeClaude([search, lambda kw: grid(kw, 2)]))
-    evs = events(app_client.post("/api/chat", json={"session_id": sid, "message": "No limit",
-                                                    "answers": [{"field": "budget", "value": "none"}]}))
-    assert "products" in [e for e, _ in evs]
+    monkeypatch.setattr(loop, "_client", FakeClaude([search, present]))
+    evs = events(app_client.post("/api/chat", json={"session_id": sid, "message": "brunch look around my palazzos"}))
+    lk = next(d for e, d in evs if e == "looks")["looks"][0]
+    own = next(it["product"] for it in lk["items"] if it["slot"] == "bottom")
+    assert own["id"] == "w_palazzo" and own["owned"] and own["price"] == 0 and lk["total"] == top["price"]
+    assert [st["slot"] for st in renders.plan(lk["items"])] == ["top"]  # the owned piece isn't drawn
 
 
 def test_a_rejected_request_drops_only_what_the_api_names(monkeypatch):
@@ -304,3 +352,19 @@ def test_remember_preference_checks_its_own_input():
     assert not tools.remember(None, {"kind": "love", "attribute": "color", "value": "red"})["ok"]
     assert not tools.remember(None, {"kind": "never", "attribute": "color", "value": " "})["ok"]
     assert not next(t for t in tools.TOOLS if t["name"] == "remember_preference").get("strict")
+
+
+def test_a_turn_finishes_after_the_client_disconnects(app_client):
+    """A page reload mid-turn must not lose the reply: the turn runs on and persists it."""
+    from app.agent import routes
+    sid = new_session(BEACH)
+
+    async def go():
+        gen = routes._stream(routes.ChatIn(session_id=sid, message="beach looks"))
+        await gen.__anext__()  # first status frame, then the client goes away
+        await gen.aclose()
+        await asyncio.gather(*routes._turns)
+
+    asyncio.run(go())
+    msgs = app_client.get(f"/api/session/{sid}/messages").json()["messages"]
+    assert [m["role"] for m in msgs] == ["user", "assistant"] and msgs[1]["looks"]

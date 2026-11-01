@@ -33,6 +33,14 @@ class RenderError(Exception):
         self.code, self.user_message = code, user_message or COPY.get(code, GENERIC)
 
 
+class VideoPending(RenderError):
+    """The clip's task is still running at YouCam after this polling window. Not a failure: the look stays `pending`
+    and the next poll resumes the same task_id (no new units)."""
+
+    def __init__(self):
+        super().__init__("pending", "Your clip is still being made. It can take a few minutes.")
+
+
 class RenderUnavailable(RenderError):
     """Demo mode (or out of credit) and the render is not cached. No call was made."""
 
@@ -305,27 +313,37 @@ async def image_to_video(src: Src | str, prompt: str, src_key: str | None = None
     if is_cached(key):
         ex("update renders set cached_hits=cached_hits+1 where cache_key=?", key)
         return local
-    if demo_mode():
+    # A task still running at YouCam (already paid for) is resumed, never paid for again. Only a real YouCam error
+    # (task_status error, a 4xx) ends it; a timeout or a network blip leaves it running for the next poll.
+    prev = q1("select task_id from renders where cache_key=? and task_id is not null and (status='running' or "
+              "(status='error' and error in ('timeout','network')))", key)
+    if demo_mode() and not (prev and config.YOUCAM_API_KEY):
         raise RenderUnavailable()
     t0 = time.monotonic()
-    # A timed-out task keeps running at YouCam (and is already paid for): resume polling it instead of paying again.
-    prev = q1("select task_id from renders where cache_key=? and task_id is not null and status in ('running','error')", key)
+    task_id = prev["task_id"] if prev else None
     try:
         async with asyncio.timeout(config.VIDEO_TIMEOUT), _client() as c:
-            if prev:
-                task_id = prev["task_id"]
-            else:
+            if not task_id:
                 body = {**await _src_field(src, "image-to-video"), "resolution": "480", "dst_duration": 5, "prompt": prompt}
                 d = await _send(c, "POST", "/s2s/v2.0/task/image-to-video/youcam", json=body)
                 task_id = d["data"]["task_id"]
-            _log(key, src_key, src_url, "video", None, task_id=task_id, status="running")
+            _log(key, src_key, src_url, "video", None, task_id=task_id, status="running", error=None)
             remote = _result_url(await _poll(c, f"/s2s/v2.0/task/image-to-video/youcam/{task_id}"))
             await _download(remote, config.media_path(local))
     except TimeoutError:
-        _log(key, src_key, src_url, "video", None, status="error", error="timeout")
+        if task_id:
+            raise VideoPending() from None
         raise RenderError("timeout", "The clip took too long. Try again in a minute.") from None
     except httpx.HTTPError as e:
+        if task_id:
+            raise VideoPending() from e
         raise RenderError("network") from e
+    except RenderError as e:
+        if task_id and e.code.startswith("http_5"):  # YouCam hiccup while polling: the task itself is fine
+            raise VideoPending() from e
+        if task_id and not isinstance(e, RenderUnavailable):
+            _log(key, src_key, src_url, "video", None, status="error", error=e.code)
+        raise
     _log(key, src_key, src_url, "video", None, status="success", result_url=remote, local_path=local,
          units=config.VIDEO_UNITS, latency_ms=int((time.monotonic() - t0) * 1000), error=None)
     return local

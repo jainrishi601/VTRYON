@@ -97,6 +97,9 @@ function Header({ path }: { path: string }) {
             NORTHLINE
           </Link>
           <div className="flex items-center justify-end gap-4 md:gap-5">
+            <Link to="/tryon" data-testid="header-tryon" className="hidden lg:inline-flex items-center gap-2 text-[13px] hover:opacity-60 transition-opacity">
+              <span className="w-1.5 h-1.5 rounded-full bg-accent" aria-hidden />Your style profile
+            </Link>
             <button aria-label="Search" onClick={() => setSearching((s) => !s)} className="p-1 hover:opacity-60">
               <Search size={19} strokeWidth={1.5} />
             </button>
@@ -110,10 +113,11 @@ function Header({ path }: { path: string }) {
         {menu && (
           <nav className="md:hidden border-t border-line bg-white text-ink px-4 py-2 flex flex-col">
             {nav.map(([l, to]) => (
-              <Link key={to} to={to} onClick={() => setMenu(false)} className="py-3 font-serif text-[28px] border-b border-line last:border-0">
+              <Link key={to} to={to} onClick={() => setMenu(false)} className="py-3 font-serif text-[28px] border-b border-line">
                 {l}
               </Link>
             ))}
+            <Link to="/tryon" onClick={() => setMenu(false)} className="py-4 text-[15px] inline-flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-accent" />Your style profile</Link>
           </nav>
         )}
       </header>
@@ -154,6 +158,15 @@ function CartDrawer() {
   const subtotal = lines.reduce((s, l) => s + l.price, 0)
   useEffect(() => {
     if (!open) return
+    const b = document.body.style
+    const gap = window.innerWidth - document.documentElement.clientWidth
+    const prev = [b.overflow, b.paddingRight]
+    b.overflow = 'hidden'
+    if (gap > 0) b.paddingRight = `${gap}px`
+    return () => { b.overflow = prev[0]; b.paddingRight = prev[1] }
+  }, [open])
+  useEffect(() => {
+    if (!open) return
     const k = (e: KeyboardEvent) => e.key === 'Escape' && cartActions.close()
     window.addEventListener('keydown', k)
     return () => window.removeEventListener('keydown', k)
@@ -181,7 +194,7 @@ function CartDrawer() {
             <button className="h-11 px-6 rounded-full border border-ink text-[14px]" onClick={() => { cartActions.close(); navigate('/women') }}>Continue shopping</button>
           </div>
         ) : (
-          <ul className="flex-1 overflow-y-auto px-6 divide-y divide-line" data-testid="cart-lines">
+          <ul className="flex-1 overflow-y-auto overscroll-contain px-6 divide-y divide-line" data-testid="cart-lines">
             {lines.map((l) => (
               <li key={l.key} className="py-5 flex gap-4" data-testid="cart-line">
                 <img src={l.image_url} alt="" className="w-20 h-[106px] object-cover bg-surface shrink-0" />
@@ -234,7 +247,7 @@ function Footer() {
         {[
           ['Shop', [['Women', '/women'], ['Men', '/men'], ["Resort '26", '/resort']]],
           ['Help', [['Shipping', '/judge'], ['Returns', '/judge'], ['Size guide', '/judge']]],
-          ['Elara', [['Judge guide', '/judge'], ['For merchants', '/merchant'], ['Render log', '/admin/renders']]],
+          ['Elara', [['Your style profile', '/tryon'], ['Judge guide', '/judge'], ['For merchants', '/merchant'], ['Render log', '/admin/renders']]],
         ].map(([h, links]) => (
           <div key={h as string}>
             <p className="label text-white/50 mb-4">{h as string}</p>

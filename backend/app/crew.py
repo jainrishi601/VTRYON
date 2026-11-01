@@ -24,8 +24,12 @@ def _add_member(crew_id, token, name, photo_url=None, src_key=None, is_owner=Fal
 
 
 def create_or_reuse(session_id: str, look_id: str, name: str | None = None, display_name: str | None = None) -> str:
+    """The shopper's crew: this session's, else the newest crew their token owns (one standing crew per shopper, so a
+    look shared from a new chat lands with the friends already in it), else a new one."""
     sess = sessions.get_session(session_id)
-    crew = q1("select id from crews where owner_session_id=?", session_id)
+    crew = q1("select id from crews where owner_session_id=?", session_id) or q1(
+        "select c.id from crews c join crew_members m on m.crew_id=c.id where m.member_token=? and m.is_owner=1 "
+        "order by c.created_at desc limit 1", sess["user_token"])
     if crew:
         cid = crew["id"]
     else:
@@ -38,14 +42,32 @@ def create_or_reuse(session_id: str, look_id: str, name: str | None = None, disp
     return cid
 
 
+def for_token(user_token: str | None) -> list[dict]:
+    """Crews a shopper owns or joined (as a member with their own token), most recently active first. Lets the widget
+    find the shopper's crew from the session instead of localStorage."""
+    if not user_token:
+        return []
+    rows = q("select c.id, c.name, c.occasion, max(m.is_owner) is_owner, coalesce((select max(created_at) from "
+             "crew_comments x where x.crew_id=c.id), c.created_at) active, (select count(*) from crew_looks l where "
+             "l.crew_id=c.id) looks from crews c join crew_members m on m.crew_id=c.id where m.member_token=? "
+             "group by c.id order by active desc", user_token)
+    return [{"id": r["id"], "name": r["name"], "occasion": r["occasion"], "is_owner": bool(r["is_owner"]),
+             "looks": r["looks"], "updated_at": r["active"]} for r in rows]
+
+
 def add_look(crew_id: str, look_id: str) -> None:
     ex("insert or ignore into crew_looks(crew_id, look_id, added_at) values (?,?,?)", crew_id, look_id, now())
     for m in q("select * from crew_members where crew_id=? and photo_url is not null", crew_id):
         _member_render(crew_id, look_id, m)
 
 
-def join(crew_id: str, display_name: str, photo_url=None, src_key=None) -> dict:
-    m = _add_member(crew_id, secrets.token_urlsafe(18)[:24], display_name.strip()[:40] or "Guest", photo_url, src_key)
+def join(crew_id: str, display_name: str, photo_url=None, src_key=None, user_token: str | None = None) -> dict:
+    """Join a crew. With the shopper's `user_token` the membership is keyed on it (idempotent, and the crew shows up in
+    their session's `crews`); without one the member gets a fresh token."""
+    if user_token and (m := _member(crew_id, user_token)):
+        return m
+    m = _add_member(crew_id, user_token or secrets.token_urlsafe(18)[:24], display_name.strip()[:40] or "Guest",
+                    photo_url, src_key)
     if photo_url:
         for cl in q("select look_id from crew_looks where crew_id=? order by added_at, rowid", crew_id):
             _member_render(crew_id, cl["look_id"], m)
@@ -71,17 +93,34 @@ def _member_render(crew_id, look_id, m) -> None:
     looks.start_render(copy["id"], memory=False)
 
 
+REACTIONS = ("up", "down", "swap")
+
+
 def comment(crew_id, member_token, look_id, slot=None, text=None, reaction=None) -> dict:
+    """A comment and/or a reaction. Comments are many; reactions are one per member per piece (slot, or the whole look
+    when slot is null): a different reaction replaces the old one, the same one again (without text) toggles it off."""
     m = _member(crew_id, member_token)
     if not m or not q1("select 1 from crew_looks where crew_id=? and look_id=?", crew_id, look_id):
         raise KeyError("not a member, or the look is not in this crew")
+    text = (text or "").strip()[:500] or None
+    fresh = True  # a reaction the member didn't already have: it teaches the owner's DNA once
+    if reaction:
+        prev = q("select * from crew_comments where crew_id=? and look_id=? and member_id=? and slot is ? and "
+                 "reaction is not null order by created_at, rowid", crew_id, look_id, m["id"], slot)
+        for p in prev:  # text stays; only the old reaction goes
+            ex("update crew_comments set reaction=null where id=?" if p["text"] else "delete from crew_comments where id=?",
+               p["id"])
+        if prev and prev[-1]["reaction"] == reaction and not text:
+            return {"id": prev[-1]["id"], "look_id": look_id, "slot": slot, "member_id": m["id"],
+                    "display_name": m["display_name"], "text": None, "reaction": None,
+                    "created_at": prev[-1]["created_at"], "removed": True}
+        fresh = not prev or prev[-1]["reaction"] != reaction
     cid = new_id("c_", 10)
     ex("insert into crew_comments(id, crew_id, look_id, slot, member_id, text, reaction, created_at) "
-       "values (?,?,?,?,?,?,?,?)", cid, crew_id, look_id, slot, m["id"], (text or "").strip()[:500] or None,
-       reaction, now())
+       "values (?,?,?,?,?,?,?,?)", cid, crew_id, look_id, slot, m["id"], text, reaction, now())
     lk = q1("select * from looks where id=?", look_id)
     owner = sessions.get_session(lk["session_id"]) or {}
-    if reaction in ("up", "down") and owner.get("user_token") != member_token:
+    if reaction in ("up", "down") and fresh and owner.get("user_token") != member_token:
         items = [it for it in looks.hydrate(lk["items"]) if slot is None or it["slot"] == slot]
         dna.record_look_event(owner["user_token"], items, "friend_liked" if reaction == "up" else "friend_disliked",
                               sessions.scope(owner))
@@ -93,31 +132,40 @@ def _comment_json(c) -> dict:
     return {k: c[k] for k in ("id", "look_id", "slot", "member_id", "display_name", "text", "reaction", "created_at")}
 
 
+def _current(look_comments: list[dict]) -> dict[tuple, str]:
+    """(member_id, slot) -> that member's current reaction. Comments are chronological, so the latest wins (older
+    rows can hold stacked reactions from before the one-per-piece rule)."""
+    return {(c["member_id"], c["slot"]): c["reaction"] for c in look_comments if c["reaction"] in REACTIONS}
+
+
 def _verdict(look_comments: list[dict], n_members: int) -> dict:
-    votes = {}
-    for c in look_comments:  # chronological: a member's look-level reaction wins; else net of their item reactions
-        if c["reaction"] not in ("up", "down"):
-            continue
-        v = votes.setdefault(c["member_id"], {"look": None, "net": 0})
-        if c["slot"] is None:
-            v["look"] = c["reaction"]
-        v["net"] += 1 if c["reaction"] == "up" else -1
+    """Voters are the members who reacted to the look or any piece. A member's vote is their look-level up/down,
+    else the net of their piece reactions (a swap counts as wanting a change). ratio = up / members, for the bar."""
+    votes: dict[str, dict] = {}
+    for (mid, slot), r in _current(look_comments).items():
+        v = votes.setdefault(mid, {"look": None, "net": 0})
+        if slot is None and r in ("up", "down"):
+            v["look"] = r
+        v["net"] += 1 if r == "up" else -1
     final = [v["look"] or ("up" if v["net"] > 0 else "down" if v["net"] < 0 else None) for v in votes.values()]
-    up, down = final.count("up"), final.count("down")
-    voters = up + down
-    label = (f"{up} of {n_members} love it" if up else f"{down} of {n_members} want changes" if down
-             else "No votes yet")
-    return {"up": up, "down": down, "voters": voters, "label": label}
+    up, down, voters = final.count("up"), final.count("down"), len(votes)
+    n = max(n_members, voters)
+    label = (f"{up} of {n} love it" if up else f"{down} of {n} want changes" if down
+             else f"{voters} of {n} reacted" if voters else "No votes yet")
+    return {"up": up, "down": down, "voters": voters, "members": n, "ratio": round(up / n, 3) if n else 0.0,
+            "label": label}
 
 
-def crew_json(crew_id: str, member_token: str | None = None) -> dict | None:
+def crew_json(crew_id: str, member_token: str | None = None, web: str | None = None) -> dict | None:
+    """web: the web app origin for share_url (config.web_url from the request); default config.web_url()."""
     c = q1("select * from crews where id=?", crew_id)
     if not c:
         return None
     members = q("select * from crew_members where crew_id=? order by created_at, rowid", crew_id)
     comments = q("select c.*, m.display_name from crew_comments c join crew_members m on m.id=c.member_id "
-                 "where c.crew_id=? order by c.created_at", crew_id)
+                 "where c.crew_id=? order by c.created_at, c.rowid", crew_id)
     crew_looks = q("select * from crew_looks where crew_id=? order by added_at, rowid", crew_id)
+    me = next((m["id"] for m in members if member_token and m["member_token"] == member_token), None)
     out_looks = []
     for cl in crew_looks:
         lj = looks.look_json(cl["look_id"])
@@ -133,16 +181,18 @@ def crew_json(crew_id: str, member_token: str | None = None) -> dict | None:
             elif m["id"] in rmap and (mr := looks.look_json(rmap[m["id"]])):
                 rs.append({"member_id": m["id"], "status": mr["render"]["status"], "image_url": mr["render"]["image_url"]})
         lc = [x for x in comments if x["look_id"] == lj["id"]]
+        cur = _current(lc)
         slots = {}
         for it in lj["items"]:
-            sc = [x for x in lc if x["slot"] == it["slot"]]
-            slots[it["slot"]] = {r: sum(x["reaction"] == r for x in sc) for r in ("up", "down", "swap")}
-            slots[it["slot"]]["comments"] = sum(bool(x["text"]) for x in sc)
-        out_looks.append({"look": lj, "renders": rs, "verdict": _verdict(lc, len(members)), "slot_counts": slots})
+            slots[it["slot"]] = {r: sum(v == r for (_, s), v in cur.items() if s == it["slot"]) for r in REACTIONS}
+            slots[it["slot"]]["comments"] = sum(bool(x["text"]) for x in lc if x["slot"] == it["slot"])
+        mine = {(s or "look"): v for (mid, s), v in cur.items() if mid == me}
+        out_looks.append({"look": lj, "renders": rs, "verdict": _verdict(lc, len(members)), "slot_counts": slots,
+                          "my_reactions": mine})
     stamps = [c["created_at"], *(m["created_at"] for m in members), *(x["created_at"] for x in comments),
               *(cl["added_at"] for cl in crew_looks)]
     return {"id": c["id"], "name": c["name"], "occasion": c["occasion"],
-            "share_url": f"{config.PUBLIC_BASE_URL or 'http://localhost:5173'}/?crew={c['id']}",
+            "share_url": f"{web or config.web_url()}/?crew={c['id']}",
             "members": [{"id": m["id"], "display_name": m["display_name"], "avatar_url": m["photo_url"],
                          "is_owner": bool(m["is_owner"]), "is_you": bool(member_token) and m["member_token"] == member_token}
                         for m in members],
@@ -216,10 +266,11 @@ def _inr(n: int) -> str:
     return f"₹{s}"
 
 
-async def share_png(crew_id: str, look_id: str, fmt: str = "square") -> Path:
+async def share_png(crew_id: str, look_id: str, fmt: str = "square", web: str | None = None) -> Path:
     c = q1("select * from crews where id=?", crew_id)
     lj = looks.look_json(look_id)
-    stamp = f"{lj['render']['image_url']}|{lj['total']}|{lj['name']}"
+    link = f"{web or config.web_url()}/?crew={crew_id}".removeprefix("https://").removeprefix("http://")
+    stamp = f"{lj['render']['image_url']}|{lj['total']}|{lj['name']}|{link}"
     dest = config.MEDIA_DIR / "share" / f"{crew_id}_{look_id}_{fmt}_{hashlib.md5(stamp.encode()).hexdigest()[:8]}.png"
     if dest.exists():
         return dest
@@ -270,7 +321,6 @@ async def share_png(crew_id: str, look_id: str, fmt: str = "square") -> Path:
         y += int(tw * 1.25) + 24
     d.line((x0, y, x0 + colw, y), fill=LINE, width=2)
     d.text((x0, y + 20), f"Total {_inr(lj['total'])}", font=body, fill=INK)
-    link = f"{config.PUBLIC_BASE_URL or 'localhost:5173'}/?crew={crew_id}".removeprefix("https://").removeprefix("http://")
     lf = _font(SANS, 22)
     while d.textlength(link, font=lf) > colw and lf.size > 12:
         lf = _font(SANS, lf.size - 1)

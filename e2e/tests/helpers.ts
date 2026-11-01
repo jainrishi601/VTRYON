@@ -1,6 +1,6 @@
 import { expect, type APIRequestContext, type Page } from '@playwright/test'
 
-export const API = `http://localhost:${process.env.E2E_API_PORT ?? '8000'}`
+export const API = `http://localhost:${process.env.E2E_API_PORT ?? '8010'}`
 
 /** Playwright CSS/test-id locators pierce open shadow roots, so widget elements are found directly. */
 export const w = (page: Page, id: string) => page.getByTestId(id)
@@ -16,12 +16,15 @@ export async function answerUntilResults(page: Page, prefer: RegExp = /women/i) 
   const results = page.locator('[data-testid=look-card], [data-testid=grid-card]')
   for (let i = 0; i < 3; i++) {
     const card = w(page, 'clarify-card')
-    await expect(results.first().or(card)).toBeVisible({ timeout: 60_000 })
+    await expect(results.first().or(card)).toBeVisible({ timeout: 90_000 }) // live Claude under load
     if (await results.count()) return
+    const q1 = await w(page, 'clarify-question').innerText().catch(() => '')
     const opts = w(page, 'clarify-option')
     const match = opts.filter({ hasText: prefer })
     await ((await match.count()) ? match.first() : opts.first()).click()
-    if (await w(page, 'clarify-card').count()) { // a second question on the same card
+    await page.waitForTimeout(500) // the card shows the pick for a beat, then moves on
+    const q2 = await w(page, 'clarify-question').innerText({ timeout: 1000 }).catch(() => '')
+    if (q2 && q2 !== q1) { // a second question on the same card
       const o2 = w(page, 'clarify-option')
       const m2 = o2.filter({ hasText: prefer })
       await ((await m2.count()) ? m2.first() : o2.first()).click()

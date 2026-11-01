@@ -130,3 +130,16 @@ def test_new_chat_does_not_inherit_gift_recipient():
     assert out["for"] == "self" and "recipient" not in out and "gender" not in out
     assert out["occasion"] == "Office" and out["budget_max"] == 3000
     assert _carry({"for": "self", "gender": "women"})["gender"] == "women"
+
+
+def test_render_orphaned_by_a_restart_resumes_on_read(c, fx_catalog):
+    from conftest import new_session, wait
+
+    from app import db, looks
+    sid = new_session(c)
+    lk = c.post("/api/tryon", json={"session_id": sid, "product_ids": ["wt1"]}).json()
+    path = f"/api/looks/{lk['id']}"
+    wait(c, path, lambda r: r["render"]["status"] == "ready")
+    db.ex("update looks set render_status='rendering', render_url=null where id=?", lk["id"])  # task died mid-render
+    looks._running.discard(lk["id"])
+    assert wait(c, path, lambda r: r["render"]["status"] == "ready")["render"]["image_url"]

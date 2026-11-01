@@ -33,24 +33,22 @@ TOOLS = [
     {
         "name": "ask_clarification",
         "description": (
-            "Ask the shopper 1-2 short questions as ONE tap-able card, then end the turn. Use it at the start of "
-            "every new request (see the system prompt) for what would most change what you show: who it's for, "
-            "the wearer's gender, the occasion, a budget, or the one detail that sharpens this request (dress code, "
-            "vibe, fit, colour). Never ask what <shopper> or the chat already answers. Most important first."
+            "Ask the shopper ONE short question as a tap-able card, then end the turn. Only for a REQUIRED field "
+            "that is missing (see the system prompt): who it's for when ambiguous, the wearer's gender when it "
+            "can't be told, the occasion for an outfit when there is none, or a budget when the wording implies a "
+            "cap without a number. Never for vibe, style, fit or detail: show looks instead."
         ),
         "strict": True,
         "input_schema": _obj({
             "questions": {
                 "type": "array",
-                "description": "1 or 2 questions, never more.",
+                "description": "Exactly 1 question.",
                 "items": _obj({
-                    "field": {"type": "string", "enum": ["wearer", "gender", "occasion", "budget", "style", "fit",
-                                                          "detail"], "description": (
+                    "field": {"type": "string", "enum": ["wearer", "gender", "occasion", "budget"], "description": (
                         "What the answer fills in. Option values must follow it: wearer -> \"self\" or a relation "
                         "(\"brother\", \"friend\"); gender -> \"women\", \"men\" or \"both\"; occasion -> a "
                         "short occasion (\"Beach party\"); budget -> rupees per look (or per piece for a product "
-                        "request) as digits (\"5000\") or \"none\"; fit -> \"relaxed\", \"regular\" or "
-                        "\"fitted\"; style and detail -> the option's own short words (\"Smart casual\").")},
+                        "request) as digits (\"5000\") or \"none\".")},
                     "question": {**_STR, "description": "One short sentence, second person, no exclamation marks."},
                     "options": {"type": "array", "description": "2-4 answers. The card adds \"Something else\".",
                                 "items": _obj({"label": {**_STR, "description": "What the button says."},
@@ -97,12 +95,7 @@ TOOLS = [
             "try_next": {**_STRS, "description": (
                 "2 short follow-ups the shopper might tap next, in the shopper's own voice and under 60 characters, "
                 "e.g. \"Shorts instead of trousers in look 1\", \"Which one works for a sunset dinner?\".")},
-            "request": {"type": "string", "enum": ["new", "new_fully_specified", "refinement"], "description": (
-                "new: a new occasion, kind of piece or person (it must follow your question card); "
-                "new_fully_specified: new, but this message already states who it's for, a budget and the key "
-                "detail; refinement: a change to what is on screen.")},
-        }, ["message", "looks", "modifies_look_id", "budget_per_look", "wearer_is_minor", "wearer", "try_next",
-            "request"]),
+        }, ["message", "looks", "modifies_look_id", "budget_per_look", "wearer_is_minor", "wearer", "try_next"]),
     },
     {
         "name": "present_products",
@@ -120,11 +113,7 @@ TOOLS = [
             "try_next": {**_STRS, "description": (
                 "2 short follow-ups the shopper might tap next, in the shopper's own voice and under 60 characters, "
                 "e.g. \"Shorts instead of trousers in look 1\", \"Which one works for a sunset dinner?\".")},
-            "request": {"type": "string", "enum": ["new", "new_fully_specified", "refinement"], "description": (
-                "new: a new occasion, kind of piece or person (it must follow your question card); "
-                "new_fully_specified: new, but this message already states who it's for, a budget and the key "
-                "detail; refinement: a change to what is on screen.")},
-        }, ["message", "product_refs", "wearer", "try_next", "request"]),
+        }, ["message", "product_refs", "wearer", "try_next"]),
     },
     {
         "name": "remember_preference",
@@ -308,6 +297,8 @@ def validate(t, inp: dict) -> tuple[list[dict], list[str]]:
         if key and key in seen_sets:
             e.append("is identical to another look; make each look distinct")
         seen_sets.add(key)
+        if len((spec.get("why") or "").split()) < 4:
+            e.append("needs a real `why`: one concrete sentence about these pieces")
         nm = (spec.get("name") or "").strip().lower()
         if nm in names:
             e.append("reuses another look's name")

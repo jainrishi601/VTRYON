@@ -1,5 +1,6 @@
 """U-YC-1..7: the YouCam wrapper against a fake YouCam (httpx.MockTransport). No network."""
 
+import asyncio
 import io
 import json
 
@@ -200,3 +201,49 @@ async def test_video_uses_result_src_when_stale(fake, env, monkeypatch):
     config.media_path("/media/renders/rk.jpg").write_bytes(JPEG)
     await looks._video({"id": "lk_x", "render_key": "rk", "render_url": "/media/renders/rk.jpg"})
     assert fake.bodies("/task/image-to-video/youcam")[0]["src_file_id"] == "f_123"
+
+
+async def test_video_outlasting_the_window_stays_pending_and_resumes_the_same_task(fake, env, monkeypatch):
+    """J: a slow clip is not failed. The look stays `pending`; the next poll resumes the SAME task (no new units);
+    only a real YouCam error marks it failed."""
+    from app import looks
+    from app.db import ex
+    monkeypatch.setattr(config, "VIDEO_TIMEOUT", 0.05)
+    monkeypatch.setattr(config, "POLL_S", 0.01)
+    fake.polls = ["running"]
+    config.media_path("/media/renders/rk.jpg").parent.mkdir(parents=True, exist_ok=True)
+    config.media_path("/media/renders/rk.jpg").write_bytes(JPEG)
+    ex("insert into looks(id, session_id, items, render_status, render_key, render_url, video_status) values "
+       "('lk_v', 's', '[]', 'ready', 'rk', '/media/renders/rk.jpg', 'none')")
+    looks.start_video("lk_v")
+    for _ in range(100):
+        if "lk_v" not in looks._video_running:
+            break
+        await asyncio.sleep(0.01)
+    assert q1("select video_status from looks where id='lk_v'")["video_status"] == "pending"
+    assert "lk_v" not in looks._video_running and q1("select status from renders where garment_category='video'")[
+        "status"] == "running"
+    fake.polls = ["running", "success"]
+    monkeypatch.setattr(config, "VIDEO_TIMEOUT", 5)
+    monkeypatch.setattr(config, "YOUCAM_DEMO_MODE", True)  # resuming a paid task is allowed even in demo mode
+    looks.resume_video("lk_v")  # what GET /api/looks/{id} (and startup) does
+    looks.resume_video("lk_v")  # a second GET while it polls is a no-op
+    for _ in range(200):
+        if "lk_v" not in looks._video_running:
+            break
+        await asyncio.sleep(0.01)
+    assert q1("select video_status from looks where id='lk_v'")["video_status"] == "ready"
+    assert len(fake.bodies("/task/image-to-video/youcam")) == 1  # one task, polled twice over
+
+
+async def test_video_real_youcam_error_fails(fake, env):
+    from app import looks
+    from app.db import ex
+    fake.polls = ["error"]
+    config.media_path("/media/renders/rk.jpg").parent.mkdir(parents=True, exist_ok=True)
+    config.media_path("/media/renders/rk.jpg").write_bytes(JPEG)
+    ex("insert into looks(id, session_id, items, render_status, render_key, render_url, video_status) values "
+       "('lk_e', 's', '[]', 'ready', 'rk', '/media/renders/rk.jpg', 'pending')")
+    await looks._video(q1("select * from looks where id='lk_e'"))
+    assert q1("select video_status from looks where id='lk_e'")["video_status"] == "failed"
+    assert q1("select status from renders where garment_category='video'")["status"] == "error"

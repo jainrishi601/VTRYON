@@ -50,9 +50,12 @@ Store page (web/src/store, "Northline")
   "vto_ref_url": "https://cdn.shopify.com/…_1.jpg",
   "vto_ready": true,
   "sizes_in_stock": ["S", "M", "L"],
+  "default_size": "M",
   "product_url": "/p/nl-0042"
 }
 ```
+
+- `default_size` (added at load, `catalog.default_size`): M if in stock, else the nearest size in stock (the larger on a tie); bags and accessories are `"One Size"`. A look item's `size` refines it with the shopper's profile size (see `Look`). The cart should start on `item.size ?? product.default_size`, never on `sizes_in_stock[0]`.
 
 - `vibes` ⊂ `minimal, bold, classic, street, boho, sporty, romantic, edgy` (the PRD taxonomy). They are mapped from the source `styleArchetypes` at ingestion.
 - `formality` runs 1 (loungewear) to 5 (formal).
@@ -110,7 +113,7 @@ IDs:
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| POST | `/api/session` | `{user_token?}` | `{session_id, user_token, returning:bool, profile: Profile\|null}` |
+| POST | `/api/session` | `{user_token?}` | `{session_id, user_token, returning:bool, profile: Profile\|null, crews: CrewRef[]}` |
 | PATCH | `/api/session/{sid}` | `{brief: Brief}` | `Session` |
 | POST | `/api/session/{sid}/photo` | multipart `file` (+ `photo_gender`: `women`\|`men`, which clothes the photo wears) **or** JSON `{sample_model_id}` | `{photo_url, photo_gender}`; 422 `{error:{code:"photo_invalid", message}}` when the check fails |
 | GET | `/api/session/{sid}` | — | `Session` |
@@ -119,7 +122,9 @@ IDs:
 Brief   = { for: "self"|"other", recipient?: {relation?, gender?: "women"|"men", age_range?}, occasion: string,
             budget_max?: number|null, gender?: "women"|"men"|"both", profession?, age_range?, fit?: "relaxed"|"regular"|"fitted" }
 Session = { id, user_token, brief: Brief|null, photo_url|null, sample_model_id|null,
-            photo_gender: "women"|"men"|null /* a sample model's own gender, else what the shopper set */, dna: DnaSummary }
+            photo_gender: "women"|"men"|null /* a sample model's own gender, else what the shopper set */, dna: DnaSummary,
+            crews: CrewRef[] /* the crews this shopper's token owns or joined, most recently active first */ }
+CrewRef = { id, name, occasion, is_owner: boolean, looks: number, updated_at }
 Profile = { brief: Brief|null, dna: DnaSummary, last_occasion: string|null }
 DnaSummary = { vibes: {[vibe]: number}, colors: {[color]: number}, never: string[], name: string|null, traits: string[] }
 ```
@@ -165,12 +170,17 @@ The fallback `image_url` is `product.image_url` when the render fails.
 | POST | `/api/tryon` | `{session_id, product_ids:[...], name?, model_id?}` | `Look` (Studio, product cards, single-piece "See this on you": builds an ad-hoc look and starts the render) |
 | GET | `/api/looks/{id}/alternatives?slot=bottom` | — | `{slot, items: Alternative[], wardrobe: {account, owned}}`: the shopper's own pieces first (`owned: true`, up to 8, not for gifts), then 4–6 store pieces ranked by score within the remaining budget. `wardrobe.account` says whether the shopper has a TRYON account (the drawer's empty-state copy). |
 | POST | `/api/looks/{id}/swap` | `{slot, product_id}` | `Look` (a new look with `parent_look_id`; swap-mode render pending). `product_id` may be a catalogue id or the shopper's own `w_` wardrobe id (404 if it belongs to someone else); owned pieces cost 0 and aren't drawn, so only the store pieces re-render. |
-| POST | `/api/looks/{id}/video` | `{}` | `Look` (`video.status` → `pending`) |
+| POST | `/api/looks/{id}/video` | `{}` | `Look` (`video.status` → `pending`). A clip can take 5–10 min. Each polling window is `VIDEO_TIMEOUT` (12 min); after it the look stays `pending` and `GET /api/looks/{id}` (or a restart) resumes polling the **same** YouCam task (no new units). Only a real YouCam error (task error, 4xx) sets `failed`. |
 | POST | `/api/looks/{id}/feedback` | `{kind:"like"\|"dislike"\|"cart"}` | `{ok:true}` (writes taste edges) |
 
 ```ts
 Look = { id, name, why, tip: string|null /* finishing tip for things the store doesn't sell */,
-         items: [{slot, product: Product}], total, currency:"INR",
+         items: [{slot, product: Product, size: string|null /* cart default: profile size for tops/bottoms/dresses,
+                  else M, else nearest in stock; "One Size" for bags; null for owned pieces */}], total, currency:"INR",
+         undrawn_pieces: string[] /* titles of the shopper's own (wardrobe) pieces in the look: never drawn on the
+                                    render, which shows the store pieces only */,
+         undrawn_note: string|null /* ready copy for that, e.g. "Try-on shows the store pieces only, not your
+                                     Ivory Palazzo Trousers." */,
          score: number, score_band: "great"|"works"|"bold", score_reason: string,
          budget_max: number|null, over_budget_by: number|null, parent_look_id: string|null,
          gender: "women"|"men"|null /* unisex pieces don't count */, model_id: string|null,
@@ -186,19 +196,23 @@ Alternative = { product: Product, score, score_band, reason, price_delta }
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| POST | `/api/crews` | `{session_id, look_id, name?, display_name?}` | `Crew` (creates or reuses the session's crew, adds the look; the owner becomes a member named `display_name`, default "Host") |
+| POST | `/api/crews` | `{session_id, look_id, name?, display_name?}` | `Crew` (adds the look to the shopper's crew: this session's, else the newest crew their token owns, else a new one where the owner is a member named `display_name`, default "Host"; the owner's `member_token` is their `user_token`) |
+| GET | `/api/crews?user_token=` | — | `{crews: CrewRef[]}` (same list as `Session.crews`) |
 | GET | `/api/crews/{id}?member_token=&since=` | — | `Crew` (always the full state; `since` is accepted and ignored) |
-| POST | `/api/crews/{id}/join` | `{display_name, sample_model_id?}` or multipart `display_name`, `file?` | `{member_token, crew: Crew}`; if a photo is given, every crew look starts rendering on the member |
+| POST | `/api/crews/{id}/join` | `{display_name, sample_model_id?, user_token?}` or multipart `display_name`, `user_token?`, `file?` | `{member_token, crew: Crew}`; if a photo is given, every crew look starts rendering on the member. With `user_token` the membership is keyed on it (idempotent; `member_token` = `user_token`) so the crew shows in that shopper's `Session.crews`. |
 | POST | `/api/crews/{id}/looks` | `{member_token, look_id}` | `Crew` |
-| POST | `/api/crews/{id}/comments` | `{member_token, look_id, slot\|null, text?, reaction?: "up"\|"down"\|"swap"}` | `Comment` |
-| GET | `/api/crews/{id}/share.png?look_id=&format=square\|story` | — | PNG (1080×1080 or 1080×1920) |
+| POST | `/api/crews/{id}/comments` | `{member_token, look_id, slot\|null, text?, reaction?: "up"\|"down"\|"swap"}` | `Comment`. Comments are many. Reactions are **one per member per piece** (`slot`; `null` = the whole look): a different reaction replaces the old one, the same reaction again without text toggles it off and returns `{…Comment, reaction: null, removed: true}`. |
+| GET | `/api/crews/{id}/share.png?look_id=&format=square\|story` | — | PNG (1080×1080 or 1080×1920); the footer link uses the same web origin as `share_url` |
 
 ```ts
-Crew = { id, name, occasion, share_url, members: Member[], looks: CrewLook[], comments: Comment[], updated_at }
+Crew = { id, name, occasion, share_url /* <web origin>/?crew=<id> */, members: Member[], looks: CrewLook[],
+         comments: Comment[], updated_at }
 Member = { id, display_name, avatar_url|null, is_owner, is_you }
 CrewLook = { look: Look, renders: [{member_id, status, image_url|null}],
-             verdict: {up, down, voters, label /* "3 of 4 love it" */},
-             slot_counts: {[slot]: {up, down, swap, comments}} }
+             verdict: {up, down, voters /* members who reacted to the look or a piece */, members /* M */,
+                       ratio /* up / members, 0..1: size the bar by this */, label /* "2 of 3 love it" */},
+             slot_counts: {[slot]: {up, down, swap /* members, one reaction each */, comments}},
+             my_reactions: {[slot | "look"]: "up"|"down"|"swap"} /* the caller's (member_token) current reactions */ }
 Comment = { id, look_id, slot|null, member_id, display_name, text|null, reaction|null, created_at }
 ```
 
@@ -230,10 +244,10 @@ The shopper's own profile, shared with the store widget through the account's `u
 | POST | `/api/me/colors/analyze` | — | `{undertone, summary, recommended[], analyzed}` (Claude vision on the selfie, fixed palette) |
 | POST/GET | `/api/me/vibes/start` · `/api/me/vibes` | — | `{vibes:[…]}` one look per vibe, rendered on the body photo (2 units each, cached) |
 | POST | `/api/me/vibes/{tile}` | `{verdict: love\|like\|dislike}` | `{dna}` |
-| GET/POST | `/api/me/wardrobe` | multipart `file` (many) | `{items}`; Claude tags every piece in a photo in catalogue fields and crops each |
+| GET/POST | `/api/me/wardrobe` | multipart `file` (many) | `{items}`; Claude tags every piece in a photo in catalogue fields and crops each (`tryon.crop_box`: worn pieces clipped to their slot's band and a top stops at the bottom's waistband; shoes, jewellery and bags get a padded tight crop, or their usual band when the box is unusable, never the whole photo) |
 | PATCH/DELETE | `/api/me/wardrobe/{id}` | name, slot, category, color_family, pattern, fit, formality, allow_styling | item |
 | GET | `/api/me/dna` · DELETE `/api/me/dna?kind&value` | — | facts, learning, never, wardrobe counts, occasions, timeline |
-| GET | `/api/me/daily` · POST `/api/me/daily/regenerate` | — | `{picks:[{kind, label, look, owned, can_try, feedback}]}` casual / formal / trendy, wardrobe first |
+| GET | `/api/me/daily` · POST `/api/me/daily/regenerate` | — | `{day, picks:[{kind, label, look, owned, can_try, feedback}], wardrobe_items}` casual / formal / trendy, wardrobe first. Today's picks are dropped on any wardrobe add/edit/delete, so the next GET rebuilds them. `wardrobe_items` = pieces owned: show "Add my wardrobe" only when it is 0. A pick has at most one finishing piece per slot (never two pairs of shoes). |
 | POST | `/api/me/daily/{look}/feedback` | `{kind: wore\|like\|dislike}` | `{ok}` |
 | GET/POST | `/api/me/play?context=` · `/api/me/play` | `{pair_id, choice: a\|b\|both\|neither\|unsure}` | an A/B pair differing in one dimension (surface, colour, fit, mood) / `{dna}` |
 | GET | `/api/me/looks` | — | the stylist's recent looks for this shopper |
@@ -263,6 +277,7 @@ swap(look, slot, new_product):
 - **Session cap.** `SESSION_RENDER_CAP` (20) counts live cloth-v4 calls per session (cache hits are free). Over the cap, a look fails with copy.
 - **No render** (status `failed` + copy, no call): no photo ("Add a photo to see it on you"), a minor in the brief (`age_range` under 18), or no piece with a VTO ref.
 - **Video** needs a ready render. `src` is the render's YouCam URL while fresh, else the public `/media` URL, else our local copy uploaded once via `POST /s2s/v2.0/file/image-to-video` (falls back to `/file/cloth`) and sent as `src_file_id`; the `file_id` is cached in `uploads` as `image-to-video:<render_key>`.
+- **Share links** (`Crew.share_url`, the share PNG footer) use the web app's origin: `WEB_URL` if set, else the request's `Origin`/`Referer`, else `PUBLIC_BASE_URL`, else `http://localhost:5180` (`config.web_url`).
 - **`RENDER_STUB=1`**: no network and no `renders` rows; the result is the source photo with a coloured band, served from `/media/stub/`.
 
 ## 5. Agent turn (summary; details in `AGENT_SPEC.md`)

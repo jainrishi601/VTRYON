@@ -1,6 +1,7 @@
 """Looks: persist, score, render in the background, swap, video. Render state lives in the `looks` row."""
 
 import asyncio
+import re
 import time
 from collections.abc import AsyncIterator
 
@@ -59,11 +60,21 @@ def look_json(look_id: str) -> dict | None:
     lk = q1("select * from looks where id=?", look_id)
     if not lk:
         return None
+    if lk["render_status"] in ("pending", "rendering") and look_id not in _running:
+        _resume(look_id)  # its task died with a server restart: pick it up (finished steps are cache hits)
+        lk = q1("select * from looks where id=?", look_id)
     sess = sessions.get_session(lk["session_id"]) or {}
     ready = lk["render_status"] == "ready"
     budget = lk["budget_max"]
+    items = hydrate(lk["items"])
+    sizes = _profile_sizes(sess.get("user_token"))
+    for it in items:  # the cart line's starting size: the shopper's profile size for that kind of piece, else M
+        it["size"] = None if it["product"].get("owned") else catalog.default_size(
+            it["product"], sizes.get(SIZE_KEY.get(it["slot"], "")))
+    undrawn = [it["product"]["title"] for it in items if it["product"].get("owned")]
     return {
-        "id": lk["id"], "name": lk["name"], "why": lk["why"], "tip": lk["tip"], "items": hydrate(lk["items"]),
+        "id": lk["id"], "name": lk["name"], "why": lk["why"], "tip": lk["tip"], "items": items,
+        "undrawn_pieces": undrawn, "undrawn_note": _undrawn_note(undrawn),
         "total": lk["total"],
         "currency": "INR", "score": lk["score"], "score_band": scoring.band(lk["score"] or 0),
         "score_reason": lk["score_reason"], "budget_max": budget,
@@ -76,6 +87,24 @@ def look_json(look_id: str) -> dict | None:
         "video": {"status": lk["video_status"], "url": lk["video_url"] if lk["video_status"] == "ready" else None},
         "before_url": (sessions.model(lk["model_id"]) or {}).get("image_url") if lk["model_id"] else sess.get("photo_url"),
     }
+
+
+SIZE_KEY = {"top": "tops", "layer": "tops", "bottom": "bottoms", "one_piece": "dresses"}
+
+
+def _profile_sizes(token: str | None) -> dict:
+    from app import tryon  # tryon imports looks
+    return ((tryon.for_token(token) or {}).get("sizes") or {}) if token else {}
+
+
+def _undrawn_note(names: list[str]) -> str | None:
+    """Owned (wardrobe) pieces have no try-on reference, so a render shows only the store pieces. Say so."""
+    if not names:
+        return None
+    # "…not your ivory palazzos", not "not your My Ivory Palazzos"
+    names = [re.sub(r"^(my|your)\s+", "", n.strip(), flags=re.I).lower() for n in names]
+    which = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+    return f"Try-on shows the store pieces only, not your {which}."
 
 
 def look_gender(items: list[dict]) -> str | None:
@@ -102,6 +131,15 @@ def _is_minor(brief: dict) -> bool:
 
 def _fail(look_id: str, copy: str) -> None:
     ex("update looks set render_status='failed', render_error=? where id=?", copy, look_id)
+
+
+def _resume(look_id: str) -> None:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:  # sync caller (scripts): nothing to resume on
+        return
+    ex("update looks set render_status='idle' where id=?", look_id)
+    start_render(look_id)
 
 
 def start_render(look_id: str, memory: bool = True, model_id: str | None = None) -> None:
@@ -217,20 +255,42 @@ VIDEO_PROMPT = ("Static camera, the whole body stays in frame from head to feet 
                 "Keep the outfit, face and background exactly the same.")
 
 
+_video_running: set[str] = set()
+
+
 def start_video(look_id: str) -> None:
+    """Start the clip, or resume polling one left `pending` (a restart, or a task still running after a window)."""
     lk = q1("select * from looks where id=?", look_id)
-    if not lk or lk["render_status"] != "ready" or lk["video_status"] in ("pending", "ready"):
+    if not lk or lk["render_status"] != "ready" or lk["video_status"] == "ready" or look_id in _video_running:
         return
     ex("update looks set video_status='pending' where id=?", look_id)
+    _video_running.add(look_id)
     _spawn(_video(lk))
+
+
+def resume_video(look_id: str) -> None:
+    """Called on GET: a `pending` clip with no live poller polls its stored task again (no new units)."""
+    lk = q1("select video_status from looks where id=?", look_id)
+    if lk and lk["video_status"] == "pending" and look_id not in _video_running:
+        start_video(look_id)
+
+
+def resume_videos() -> None:
+    """On startup: every clip still `pending` resumes polling."""
+    for r in q("select id from looks where video_status='pending'"):
+        resume_video(r["id"])
 
 
 async def _video(lk: dict) -> None:
     try:
         url = await youcam.image_to_video(youcam.result_src(lk["render_key"], lk["render_url"]), VIDEO_PROMPT)
         ex("update looks set video_status='ready', video_url=? where id=?", url, lk["id"])
+    except youcam.VideoPending:
+        pass  # still `pending`; the next GET of the look resumes polling the same task
     except Exception:
         ex("update looks set video_status='failed' where id=?", lk["id"])
+    finally:
+        _video_running.discard(lk["id"])
 
 
 def feedback(look_id: str, kind: str) -> None:

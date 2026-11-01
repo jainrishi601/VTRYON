@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, ChevronsLeftRight, Download, Film, Users } from 'lucide-react'
+import { ArrowLeft, ChevronsLeftRight, Download, Film, Image as ImageIcon, Users } from 'lucide-react'
 import type { Alternative, Look } from '../shared/types'
 import { inr, signedInr, catName } from '../shared/format'
 import { abs, api, ApiError } from './api'
 import { useElara, TERMINAL } from './state'
 import { AddLookButton } from './Chat'
-import { Collage, RenderProgress, RevealImg, Ring, ScoreBadge, Sheet, lookAlt, pieceName } from './ui'
+import { Collage, Img, RenderProgress, RevealImg, Ring, ScoreBadge, Sheet, lookAlt, pieceName, plural, useExit } from './ui'
 
 const HOTSPOT: Record<string, [number, number]> = { layer: [30, 38], top: [60, 32], one_piece: [62, 42], bottom: [57, 70] }
 const REGION: Record<string, [number, number]> = { top: [14, 56], layer: [14, 60], bottom: [48, 100], one_piece: [12, 100] }
@@ -17,6 +17,8 @@ export function Viewer() {
   const [pos, setPos] = useState(50)
   const box = useRef<HTMLDivElement>(null)
   const dragging = useRef(false)
+  const [closing, close] = useExit(() => e.setViewer(null), 220)
+  const [playing, setPlaying] = useState(true)
 
   // Walk the parent chain for the history strip.
   useEffect(() => {
@@ -55,10 +57,11 @@ export function Viewer() {
   }
 
   return (
-    <div className="absolute inset-0 z-30 bg-white flex flex-col fade-in" data-testid="viewer" role="dialog" aria-label={`${look.name} on you`}>
+    <div className={`absolute inset-0 z-30 bg-white flex flex-col ${closing ? 'slide-out' : 'slide-in'}`} data-testid="viewer" role="dialog" aria-label={`${look.name} on you`}
+      onKeyDown={(ev) => { if (ev.key === 'Escape' && !e.swap && !e.share && !e.tryon) { ev.stopPropagation(); close() } }}>
       <div className="h-14 shrink-0 px-4 flex items-center gap-3 border-b border-line">
-        <button onClick={() => e.setViewer(null)} aria-label="Back" className="w-9 h-9 -ml-2 rounded-full inline-flex items-center justify-center hover:bg-surface"><ArrowLeft size={18} strokeWidth={1.5} /></button>
-        <h3 className="font-serif text-[24px] leading-none truncate flex-1" data-testid="viewer-name">{look.name}</h3>
+        <button onClick={close} aria-label="Back" className="w-9 h-9 -ml-2 rounded-full inline-flex items-center justify-center hover:bg-surface"><ArrowLeft size={18} strokeWidth={1.5} /></button>
+        <h3 className="text-[18px] font-semibold leading-tight truncate flex-1 capitalize" data-testid="viewer-name">{look.name}</h3>
         <ScoreBadge score={look.score} band={look.score_band} />
       </div>
 
@@ -135,12 +138,21 @@ export function Viewer() {
           ) : (
             <RenderProgress look={look} onModel={!!e.session?.sample_model_id} />
           )}
+          {look.video.status === 'ready' && look.video.url && playing && (
+            <video src={abs(look.video.url)} autoPlay muted loop playsInline className="absolute inset-0 w-full h-full object-cover bg-black fade-in" data-testid="viewer-video" aria-label={`${look.name}, moving`} />
+          )}
+          {look.video.status === 'pending' && (
+            <span className="absolute top-3 left-1/2 -translate-x-1/2 h-8 px-3.5 rounded-full bg-white/95 text-[12px] font-medium inline-flex items-center gap-2 whitespace-nowrap shadow" data-testid="video-pending"><Ring done={false} /> Making it move · a few minutes</span>
+          )}
           {look.video.status === 'ready' && look.video.url && (
-            <video src={abs(look.video.url)} autoPlay muted loop playsInline controls className="absolute inset-0 w-full h-full object-cover bg-black" />
+            <button onClick={() => setPlaying((p) => !p)} className="absolute bottom-3 right-3 h-8 px-3.5 rounded-full bg-white/95 text-[12px] font-semibold inline-flex items-center gap-1.5 shadow" data-testid="video-toggle">
+              {playing ? <><ImageIcon size={13} /> Photo</> : <><Film size={13} /> Play</>}
+            </button>
           )}
         </div>
       </div>
 
+      {look.undrawn_note && <p className="shrink-0 px-4 pt-3 text-[12px] text-muted text-center" data-testid="viewer-undrawn">{look.undrawn_note}</p>}
       {chain.length > 1 && (
         <div className="shrink-0 px-4 pt-3 flex gap-2 overflow-x-auto no-scrollbar" data-testid="history-strip" aria-label="Versions of this look">
           {chain.map((c) => e.looks[c.id] ?? c).map((l, i) => (
@@ -154,10 +166,12 @@ export function Viewer() {
 
       <div className="shrink-0 px-4 py-3 flex items-center gap-2 pb-safe">
         <div className="flex-1 min-w-0">
-          <p className="num text-[13px] text-muted truncate"><span className="hidden sm:inline">{look.items.length} pieces · </span><span className="text-ink font-medium">{inr(look.total)}</span></p>
+          <p className="num text-[13px] text-muted truncate"><span className="hidden sm:inline">{plural(look.items.length, 'piece')} · </span><span className="text-ink font-medium">{inr(look.total)}</span></p>
         </div>
         <button aria-label="Share with Crew" title="Share with Crew" onClick={() => e.shareLook(look.id)} className="w-11 h-11 rounded-full border border-line inline-flex items-center justify-center hover:border-ink"><Users size={16} strokeWidth={1.5} /></button>
-        <button aria-label="See it move" title="See it move" onClick={() => look.video.status !== 'pending' && e.requestVideo(look.id)} className="w-11 h-11 rounded-full border border-line inline-flex items-center justify-center hover:border-ink">
+        <button aria-label={look.video.status === 'pending' ? 'Making it move, a few minutes' : 'See it move'} title="See it move" disabled={!ready}
+          onClick={() => { if (look.video.status === 'ready') setPlaying((p) => !p); else if (look.video.status !== 'pending') { setPlaying(true); e.requestVideo(look.id) } }}
+          className={`w-11 h-11 rounded-full border inline-flex items-center justify-center hover:border-ink disabled:opacity-40 ${look.video.status === 'ready' && playing ? 'bg-ink text-white border-ink' : 'border-line'}`}>
           {look.video.status === 'pending' ? <Ring done={false} /> : <Film size={16} strokeWidth={1.5} />}
         </button>
         <a aria-label="Download image" title="Download" href={ready ? abs(r.image_url) : undefined} download={`${look.name}.jpg`} target="_blank" rel="noreferrer"
@@ -213,25 +227,25 @@ export function SwapDrawer() {
 
   const Tile = ({ a }: { a: Alternative }) => (
     <button data-testid={a.owned ? 'swap-tile-owned' : 'swap-tile'} disabled={!!picking} onClick={() => pick(a)} className="text-left group disabled:cursor-wait">
-      <div className="relative aspect-[3/4] bg-surface overflow-hidden rounded-xl">
-        <img src={abs(a.product.image_url)} alt={a.product.title} className={`w-full h-full group-hover:scale-[1.02] transition-transform duration-300 ${a.owned ? 'object-contain p-3' : 'object-cover object-top'}`} />
+      <div className={`relative aspect-[4/5] bg-surface overflow-hidden rounded-xl transition-shadow ${picking === a.product.id ? 'ring-2 ring-ink ring-offset-2' : ''}`}>
+        <Img src={a.product.image_url} alt={a.product.title} className={`w-full h-full group-hover:scale-[1.03] transition-transform duration-300 ${a.owned ? 'object-contain p-3' : 'object-cover object-top'}`} />
         <span className="absolute top-2 left-2"><ScoreBadge score={a.score} band={a.score_band} /></span>
         {a.owned && <span className="absolute bottom-2 left-2 h-6 px-2.5 rounded-full bg-ink text-white text-[10px] font-semibold uppercase tracking-[0.06em] inline-flex items-center">Yours</span>}
         {picking === a.product.id && <div className="absolute inset-0 bg-white/60 flex items-center justify-center"><Ring done={false} /></div>}
       </div>
-      <p className="mt-2 text-[14px] leading-5 line-clamp-1">{pieceName(a.product)}</p>
+      <p className="mt-2 text-[13px] font-medium leading-5 line-clamp-1">{pieceName(a.product)}</p>
       {a.owned
         ? <p className="num text-[13px] text-muted">In your wardrobe{current ? <span className="text-ok"> · saves {inr(current.price)}</span> : null}</p>
         : <p className="num text-[13px] text-muted">{inr(a.product.price)} <span className={a.price_delta > 0 ? 'text-ink' : 'text-ok'}>· {signedInr(a.price_delta)}</span></p>}
-      <p className="mt-1 text-[12px] leading-[17px] text-muted line-clamp-2">{a.reason}</p>
+      <p className="mt-0.5 text-[12px] leading-[17px] text-muted line-clamp-1" title={a.reason}>{a.reason}</p>
     </button>
   )
 
   return (
-    <Sheet title={`Swap the ${what}`} onClose={() => e.setSwap(null)} testid="swap-drawer">
-      {current && <p className="text-[13px] text-muted -mt-1 mb-4">Replacing {pieceName(current)} · <span className="num">{current.owned ? 'yours' : inr(current.price)}</span>. Everything else stays.</p>}
+    <Sheet title={`Swap the ${what}`} onClose={() => e.setSwap(null)} testid="swap-drawer" height="86%"
+      sub={current ? <>Replacing {pieceName(current)} · <span className="num">{current.owned ? 'yours' : inr(current.price)}</span>. Everything else stays.</> : undefined}>
       {!gift && (
-        <div className="mb-5 p-1 rounded-full bg-surface grid grid-cols-2 text-[13px] font-semibold" role="tablist" data-testid="swap-modes">
+        <div className="mb-4 p-1 rounded-full bg-surface grid grid-cols-2 text-[13px] font-semibold" role="tablist" data-testid="swap-modes">
           {([['new', 'Shop new', shop.length], ['mine', 'From your wardrobe', mine.length]] as const).map(([k, l, n]) => (
             <button key={k} role="tab" aria-selected={mode === k} onClick={() => setMode(k)} data-testid={`swap-mode-${k}`}
               className={`h-9 rounded-full inline-flex items-center justify-center gap-1.5 transition-colors ${mode === k ? 'bg-white shadow-sm text-ink' : 'text-muted hover:text-ink'}`}>
@@ -242,7 +256,7 @@ export function SwapDrawer() {
       )}
       {err && !items ? (
         <div className="py-10 text-center">
-          <p className="font-serif text-[24px]">We couldn’t load swaps.</p>
+          <p className="font-serif text-[20px]">We couldn’t load swaps.</p>
           <button className="mt-4 h-10 px-5 rounded-full border border-ink text-[14px]" onClick={() => setNonce((n) => n + 1)}>Try again</button>
         </div>
       ) : mode === 'mine' && items && mine.length === 0 ? (
@@ -253,7 +267,7 @@ export function SwapDrawer() {
         </div>
       ) : mode === 'new' && items && shop.length === 0 ? (
         <div className="py-10 text-center" data-testid="swap-empty">
-          <p className="font-serif text-[24px]">Nothing else fits the budget. Raise it?</p>
+          <p className="font-serif text-[20px]">Nothing else fits the budget. Raise it?</p>
           <button className="mt-4 h-10 px-5 rounded-full bg-ink text-white text-[14px]" onClick={() => {
             e.setSwap(null); e.setViewer(null); e.setTab('chat')
             e.send(`Swap the ${what} in ${look?.name ?? 'this look'}; I can stretch the budget a little.`, { lookId })
@@ -261,9 +275,9 @@ export function SwapDrawer() {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-x-3 gap-y-6 pb-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-5 pb-4">
             {items ? shown.map((a) => <Tile key={a.product.id} a={a} />)
-              : Array.from({ length: 4 }, (_, i) => <div key={i}><div className="aspect-[3/4] skeleton rounded-xl" /><div className="mt-2 h-4 w-3/4 skeleton" /><div className="mt-1.5 h-3 w-1/2 skeleton" /></div>)}
+              : Array.from({ length: 6 }, (_, i) => <div key={i}><div className="aspect-[4/5] skeleton rounded-xl" /><div className="mt-2 h-4 w-3/4 skeleton" /><div className="mt-1.5 h-3 w-1/2 skeleton" /></div>)}
           </div>
           {mode === 'mine' && mine.length > 0 && <p className="pb-4 text-[12px] text-muted">Your own pieces aren’t drawn on the try-on; the store pieces are, on your photo.</p>}
         </>

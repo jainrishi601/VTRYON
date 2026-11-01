@@ -238,7 +238,12 @@ def _seed_from_tryon(sid: str, token: str) -> None:
 def session_json(s: dict) -> dict:
     return {"id": s["id"], "user_token": s["user_token"], "brief": s["brief"], "photo_url": s["photo_url"],
             "sample_model_id": s["sample_model_id"], "photo_gender": photo_gender(s),
-            "dna": dna.summary(s["user_token"], scope(s))}
+            "dna": dna.summary(s["user_token"], scope(s)), "crews": _crews(s["user_token"])}
+
+
+def _crews(token: str) -> list[dict]:
+    from app import crew  # crew imports sessions
+    return crew.for_token(token)
 
 
 def forget(user_token: str) -> None:

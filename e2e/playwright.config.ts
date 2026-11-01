@@ -2,7 +2,7 @@ import { defineConfig, devices } from '@playwright/test'
 
 // Runs against the built store (vite preview :4173) + the FastAPI backend with zero-unit renders.
 // E2E_API_PORT moves the backend off :8000 when something else already listens there.
-const API_PORT = process.env.E2E_API_PORT ?? '8000'
+const API_PORT = process.env.E2E_API_PORT ?? '8010' // off :8000, where the live dev backend usually runs
 
 export default defineConfig({
   testDir: './tests',

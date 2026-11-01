@@ -1,7 +1,9 @@
 # Agent golden set (AGENT_SPEC §7). Runner: uv run --project backend python scripts/run_evals.py [--only E3]
 #
 # Seed keys (all optional):
-#   brief:        Brief JSON (ARCHITECTURE §3); omitted = no onboarding
+#   brief:        Brief JSON (ARCHITECTURE §3); omitted = no onboarding. Seeded as confirmed (the onboarding form)
+#   unconfirmed:  true = the brief is only remembered from an earlier chat
+#   wardrobe:     TRYON wardrobe pieces: [{name, slot, category, colors, color_family, fabric, vibes, formality, fit}]
 #   photo:        sample model id -> session photo (renders are stubbed: RENDER_STUB=1)
 #   dna:          [[edge_type, attr_kind, value, weight], ...] written with dna.add_edge (scoped like the session)
 #   looks:        current looks on screen: {key, name, items: [product ids]}; seeded as the last assistant turn
@@ -10,7 +12,8 @@
 #   turns:        the shopper's messages, in order; `look` selects a seeded look (by key) for that message
 # Assertions (`expect`, checked on the LAST turn unless noted; every scenario also gets the global voice checks):
 #   looks: [min, max]         number of looks presented        no_looks: true   talk path (no cards)
-#   clarify: true|false       exactly one clarify event (true) / none (false)
+#   clarify: true|false       exactly one clarify event (true) / none (false). Every card must carry exactly one
+#                             question on a required field (wearer/gender/occasion/budget): a global check
 #   chips_all: [..]           every listed chip present (case-insensitive substring)
 #   chips_any: [..]           at least one chip contains one of these
 #   wearer: women|men         every item is that gender or unisex
@@ -27,6 +30,11 @@
 #   query_any: [..]           some search_catalog query contains one of these words
 #   text_any: [..]            the agent text contains one of these (case-insensitive)
 #   minor_no_render: true     every look's render failed with the minor copy (no try-on)
+#   slot_any: slot            at least one look has that slot (e.g. a layer)
+#   formality_range: [lo, hi] mean formality across the looks
+#   owned_in_all: "word"      every look has an owned (wardrobe) piece whose name contains it
+#   no_store_slot: [slots]    no store piece in these slots (the shopper's own piece fills it)
+#   auto_render: true         looks arrive pending/rendering and end ready (photo or sample model on file)
 #   judge: "rubric"           Haiku judge must return pass
 
 E1:
@@ -40,13 +48,14 @@ E1:
 E2:
   title: No brief, wedding, multi-gender store
   turns: ["something for a wedding"]
-  expect: {clarify: true, no_looks: true, chips_all: [women, men]}
+  expect: {clarify: true, no_looks: true, chips_all: [women, men],
+           judge: "Ava asks exactly one question, about whether to shop women's or men's. She does not ask about style, vibe or budget."}
 
 E3:
-  title: Recipient inference from relation
+  title: Gifting beat - recipient inference, straight to looks
   turns: ["college farewell outfit for my brother, he's 20"]
-  expect: {looks: [2, 3], clarify: false, wearer: men,
-           judge: "The message refers to the brother as him/his/he (never 'you' as the wearer) and does not ask about gender."}
+  expect: {looks: [3, 3], clarify: false, wearer: men, slot_any: layer, formality_range: [2.4, 3.7],
+           judge: "Ava goes straight to looks without asking anything. Her message refers to the brother as him/his/he (never 'you' as the wearer), reads naturally, never mentions age or try-on limits, and the looks suit a smart-casual college farewell."}
 
 E4:
   title: Budget implied without a number
@@ -87,7 +96,7 @@ E9:
   title: Impossible budget
   brief: {for: self, gender: women, occasion: Wedding}
   turns: ["full wedding look under ₹500"]
-  expect: {max_total_or_overage: 500,
+  expect: {looks: [1, 3], clarify: false, max_total_or_overage: 500,
            judge: "Ava says plainly that nothing fits ₹500. If she shows a look, she states it is over budget and by how much (or that it is the closest). She does not pretend anything costs ₹500 or invent products."}
 
 E10:
@@ -137,3 +146,19 @@ E15:
   looks: [{key: T1, name: Studio Tray, items: [nl-0009]}]
   turns: [{text: "finish this look", look: T1}]
   expect: {looks: [1, 3], parent: T1, keeps_all: T1, adds_slot: bottom}
+
+E16:
+  title: Look built around a piece the shopper owns
+  brief: {for: self, gender: women}
+  wardrobe: [{name: Ivory palazzo trousers, slot: bottom, category: palazzo trousers, colors: [ivory],
+              color_family: ivory, fabric: linen, vibes: [minimal, boho], formality: 2, fit: relaxed}]
+  turns: ["build a brunch look around my ivory palazzo trousers"]
+  expect: {looks: [1, 3], clarify: false, wearer: women, owned_in_all: palazzo, no_store_slot: [bottom],
+           judge: "Ava builds the looks around the shopper's own ivory palazzo trousers and says so; she does not try to sell her another pair of trousers."}
+
+E17:
+  title: Looks start rendering on the sample model straight away
+  brief: {for: self, gender: women, occasion: Beach trip, budget_max: 9000}
+  photo: w2
+  turns: ["going to goa next week with friends, need something breezy"]
+  expect: {looks: [2, 3], clarify: false, max_total: 9000, auto_render: true}

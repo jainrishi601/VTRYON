@@ -4,7 +4,7 @@ import type { Product, Slot } from '../shared/types'
 import { inr, SLOT_LABEL, catName } from '../shared/format'
 import { abs, api } from './api'
 import { useElara } from './state'
-import { Chip, pieceName } from './ui'
+import { Chip, Img, defaultSize, pieceName } from './ui'
 
 const CATS: ['' | Slot, string][] = [['', 'All'], ['top', 'Tops'], ['bottom', 'Bottoms'], ['one_piece', 'Dresses & sets'], ['layer', 'Layers']]
 const PRICES: [number, string][] = [[0, 'Any price'], [3000, 'Under ₹3,000'], [5000, 'Under ₹5,000'], [8000, 'Under ₹8,000']]
@@ -57,9 +57,12 @@ export function Studio() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gender, cat, price, vibe, nonce])
 
+  const [loadingMore, setLoadingMore] = useState(false)
   const more = async () => {
-    if (!items) return
+    if (!items || loadingMore) return
+    setLoadingMore(true)
     const r = await api<{ items: Product[] }>(q(items.length)).catch(() => null)
+    setLoadingMore(false)
     if (r) setItems([...items, ...r.items.filter((p) => p.slot !== 'bag' && p.slot !== 'accessory')])
   }
 
@@ -116,62 +119,65 @@ export function Studio() {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto thin-scroll px-4 sm:px-6 py-4">
+      <div className="flex-1 min-h-0 scroll-y px-4 sm:px-6 pt-4 pb-6">
         {err ? (
-          <div className="py-16 text-center"><p className="font-serif text-[24px]">The rail didn’t load.</p><button className="mt-4 h-10 px-5 rounded-full border border-ink text-[14px]" onClick={() => setNonce((n) => n + 1)}>Try again</button></div>
+          <div className="py-16 text-center"><p className="font-serif text-[20px]">The rail didn’t load.</p><button className="mt-4 h-10 px-5 rounded-full border border-ink text-[14px]" onClick={() => setNonce((n) => n + 1)}>Try again</button></div>
         ) : items && items.length === 0 ? (
-          <div className="py-16 text-center"><p className="font-serif text-[24px]">Nothing here with those filters.</p><button className="mt-4 h-10 px-5 rounded-full border border-ink text-[14px]" onClick={() => { setPrice(0); setVibe('') }}>Clear filters</button></div>
+          <div className="py-16 text-center"><p className="font-serif text-[20px]">Nothing here with those filters.</p><button className="mt-4 h-10 px-5 rounded-full border border-ink text-[14px]" onClick={() => { setPrice(0); setVibe('') }}>Clear filters</button></div>
         ) : (
-          <div className="grid grid-cols-2 gap-x-3 gap-y-6">
-            {(items ?? Array.from({ length: 6 }, () => null)).map((p, i) => {
-              if (!p) return <div key={i}><div className="aspect-[3/4] skeleton" /><div className="mt-2 h-4 w-3/4 skeleton" /></div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-5">
+            {(items ?? Array.from({ length: 9 }, () => null)).map((p, i) => {
+              if (!p) return <div key={i}><div className="aspect-[3/4] skeleton rounded-xl" /><div className="mt-2 h-4 w-3/4 skeleton" /></div>
               const inTray = tray.some((t) => t.id === p.id)
               return (
-                <div key={p.id} className="group" data-testid="studio-item">
-                  <div className="relative aspect-[3/4] bg-surface overflow-hidden">
-                    <img src={abs(p.image_url)} alt={p.title} loading="lazy" className="w-full h-full object-cover object-top" />
-                    <button onClick={() => add(p)} aria-label={inTray ? `Remove ${p.title} from tray` : `Add ${p.title} to tray`} data-testid="studio-add"
-                      className={`absolute bottom-2 right-2 w-9 h-9 rounded-full inline-flex items-center justify-center shadow-[0_2px_8px_rgba(0,0,0,.15)] transition-colors ${inTray ? 'bg-ink text-white' : 'bg-white text-ink hover:bg-ink hover:text-white'}`}>
+                // The whole tile toggles the piece in and out of the tray; the round button mirrors the state.
+                <button key={p.id} type="button" className="group text-left" data-testid="studio-item" aria-pressed={inTray} onClick={() => add(p)}
+                  aria-label={inTray ? `Remove ${p.title} from your outfit` : `Add ${p.title} to your outfit`}>
+                  <div className={`relative aspect-[3/4] bg-surface overflow-hidden rounded-xl transition-shadow duration-150 ${inTray ? 'ring-2 ring-ink ring-offset-2' : ''}`}>
+                    <Img src={p.image_url} alt={p.title} className="w-full h-full object-cover object-top group-hover:scale-[1.03] transition-transform duration-300" />
+                    <span data-testid="studio-add"
+                      className={`absolute bottom-2 right-2 w-9 h-9 rounded-full inline-flex items-center justify-center shadow-[0_2px_8px_rgba(0,0,0,.15)] transition-colors duration-150 ${inTray ? 'bg-ink text-white' : 'bg-white text-ink group-hover:bg-ink group-hover:text-white'}`}>
                       {inTray ? <Check size={16} strokeWidth={2.5} /> : <Plus size={17} strokeWidth={2} />}
-                    </button>
+                    </span>
                   </div>
                   <p className="mt-2 text-[13px] leading-[18px] line-clamp-1">{pieceName(p)}</p>
                   <p className="num text-[13px] text-muted">{inr(p.price)}</p>
-                </div>
+                </button>
               )
             })}
           </div>
         )}
         {items && items.length < total && (
-          <div className="text-center mt-6"><button onClick={more} className="h-10 px-5 rounded-full border border-line text-[13px] hover:border-ink"><span className="num">Show more · {items.length} of {total}</span></button></div>
+          <div className="text-center mt-6"><button onClick={more} aria-busy={loadingMore} disabled={loadingMore} className="h-10 px-5 rounded-full border border-line text-[13px] hover:border-ink disabled:opacity-60"><span className="num">Show more · {items.length} of {total}</span></button></div>
         )}
       </div>
 
-      <div className="shrink-0 border-t border-line px-4 sm:px-6 py-3 bg-white" data-testid="studio-tray">
+      <div className="shrink-0 border-t border-line px-4 sm:px-6 py-3 bg-white shadow-[0_-8px_24px_rgba(0,0,0,.04)]" data-testid="studio-tray">
         {tray.length === 0 ? (
-          <p className="text-[13px] text-muted text-center py-2">Tap + to build an outfit. One piece per slot.</p>
+          <p className="text-[13px] text-muted text-center py-2">Tap pieces to build an outfit. One per slot; tap again to remove.</p>
         ) : (
           <>
-            <div className="flex items-center gap-2">
-              <div className="flex gap-2 overflow-x-auto no-scrollbar flex-1 py-1">
+            {/* One compact row on wide panels (the grid keeps its room); two rows on phones. */}
+            <div className="flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-3">
+              <div className="flex gap-2 scroll-x flex-1 min-w-0 pt-1.5 pr-1.5">
                 {tray.map((p) => (
                   <div key={p.id} className="relative shrink-0">
-                    <img src={abs(p.image_url)} alt={p.title} className="w-12 h-16 object-cover object-top bg-surface" />
+                    <img src={abs(p.image_url)} alt={p.title} className="w-11 h-[58px] object-cover object-top bg-surface rounded-md pop-in" />
                     <button aria-label={`Remove ${p.title}`} onClick={() => setTray(tray.filter((t) => t.id !== p.id))} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-ink text-white inline-flex items-center justify-center"><X size={11} strokeWidth={2.5} /></button>
                   </div>
                 ))}
               </div>
               <div className="text-right shrink-0">
                 <p className="label text-muted">Total</p>
-                <p className="num text-[16px] font-medium" data-testid="tray-total">{inr(sum)}</p>
+                <p className="num text-[16px] font-semibold" data-testid="tray-total">{inr(sum)}</p>
+              </div>
+              <div className="w-full sm:w-auto flex gap-2 shrink-0">
+                <button data-testid="studio-tryon" disabled={trying} aria-busy={trying} onClick={tryOn} className="flex-1 sm:flex-none h-11 px-6 rounded-full bg-ink text-white text-[14px] font-medium disabled:opacity-70 inline-flex items-center justify-center gap-2">{trying && <span className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white spin" />}{trying ? 'Starting…' : 'Try on'}</button>
+                <button onClick={() => e.addToCart(tray.map((p) => ({ product_id: p.id, title: p.title, price: p.price, image_url: p.image_url, size: defaultSize(p), styled_with: 'Ava', look_name: 'Studio' })), lookId ?? undefined)}
+                  className="flex-1 sm:flex-none h-11 px-5 rounded-full border border-ink text-[14px] font-medium hover:bg-ink hover:text-white transition-colors">Add to bag</button>
               </div>
             </div>
-            <div className="mt-3 flex gap-2">
-              <button data-testid="studio-tryon" disabled={trying} onClick={tryOn} className="flex-1 h-11 rounded-full bg-ink text-white text-[14px] font-medium disabled:opacity-60">{trying ? 'Starting…' : 'Try on'}</button>
-              <button onClick={() => e.addToCart(tray.map((p) => ({ product_id: p.id, title: p.title, price: p.price, image_url: p.image_url, size: p.sizes_in_stock.includes('M') ? 'M' : p.sizes_in_stock[0], styled_with: 'Ava', look_name: 'Studio' })), lookId ?? undefined)}
-                className="flex-1 h-11 rounded-full border border-ink text-[14px] font-medium hover:bg-ink hover:text-white transition-colors">Add to bag</button>
-            </div>
-            <button onClick={ask} data-testid="studio-ask" className="mt-2.5 w-full text-[13px] underline underline-offset-4 text-muted hover:text-ink">
+            <button onClick={ask} data-testid="studio-ask" className="mt-1.5 h-8 w-full text-[13px] underline underline-offset-4 text-muted hover:text-ink">
               {complete ? 'Ask the stylist what to change' : 'Ask the stylist to finish this look'}
             </button>
           </>

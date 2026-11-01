@@ -5,7 +5,7 @@ test('E2E-1 store loads, widget mounts in a shadow root, fonts are isolated', as
   await page.goto('/')
   await expect(page.getByRole('link', { name: 'Northline home' })).toBeVisible()
   expect(await page.evaluate(() => !!document.querySelector('#elara-root')?.shadowRoot)).toBe(true)
-  await expect(w(page, 'elara-launcher')).toHaveText(/Need help choosing/)
+  await expect(w(page, 'elara-launcher')).toHaveText(/Need help choosing|Style me/)
   // Hostile host CSS must not reach the widget.
   await page.addStyleTag({ content: '* { font-family: "Comic Sans MS", cursive !important; letter-spacing: 3px !important; }' })
   const font = await w(page, 'elara-launcher').evaluate((el) => getComputedStyle(el).fontFamily)
@@ -51,6 +51,36 @@ test('E2E-2/3/4 chat first → question card → flat looks → Try on asks for 
   })
 })
 
+test('E2E-16 empty state shows the scripted openers; flat looks get a one-tap "See these on you" strip', async ({ page }) => {
+  await page.goto('/')
+  await openWidget(page)
+  await expect(w(page, 'chat-empty')).toBeVisible()
+  await expect(w(page, 'opener')).toHaveCount(3)
+  await w(page, 'opener').first().click()
+  await answerUntilResults(page, /women/i)
+  const strip = w(page, 'see-on-you')
+  await expect(strip).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('[data-testid^=see-model-m]')).toHaveCount(0) // women's looks: women's models only
+  await w(page, 'see-model-w1').click()
+  const cards = w(page, 'look-card')
+  const n = await cards.count()
+  await expect(page.locator('[data-testid=look-card] [data-render-status=ready]')).toHaveCount(n, { timeout: 45_000 })
+  await expect(strip).toBeHidden()
+})
+
+test('E2E-17 Studio: tapping a tile toggles it in the tray', async ({ page }) => {
+  await page.goto('/')
+  await openWidget(page)
+  await w(page, 'tab-studio').click()
+  const tile = w(page, 'studio-item').first()
+  await expect(tile).toBeVisible({ timeout: 20_000 })
+  await tile.click()
+  await expect(tile).toHaveAttribute('aria-pressed', 'true')
+  await expect(w(page, 'tray-total')).toBeVisible()
+  await tile.click()
+  await expect(tile).toHaveAttribute('aria-pressed', 'false')
+})
+
 test('E2E-13 a women’s look never renders on a men’s photo; the sheet offers a women’s model instead', async ({ page, request }) => {
   await chatWithLooks(page, request, 'm1')
   const card = w(page, 'look-card').first()
@@ -92,8 +122,10 @@ test('E2E-15 a request for a kind of piece gets a product grid (live Claude only
 test('E2E-5 viewer slider → bottom hotspot → swap drawer → new render in history', async ({ page, request }) => {
   await chatWithLooks(page, request)
   const card = w(page, 'look-card').filter({ has: page.getByTestId('swap-bottom') }).first()
-  await card.getByTestId('look-try-on').click() // the session already has a women's photo: renders straight away
-  await expect(card.locator('[data-render-status=ready]')).toHaveCount(1, { timeout: 20_000 })
+  // The session already has a women's photo: the looks render on their own (or after one tap on older backends).
+  await expect(card.locator('[data-render-status]:not([data-render-status=idle]), [data-testid=look-try-on]').first()).toBeVisible({ timeout: 20_000 })
+  if (await card.getByTestId('look-try-on').count()) await card.getByTestId('look-try-on').click()
+  await expect(card.locator('[data-render-status=ready]')).toHaveCount(1, { timeout: 30_000 })
   await card.getByTestId('open-viewer').click()
   await expect(w(page, 'viewer')).toBeVisible()
   const handle = w(page, 'ba-handle')

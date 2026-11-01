@@ -11,6 +11,7 @@ from app import config, db, dna, looks, sessions
 from app.agent.tools import Refs
 
 HISTORY_N = 12
+WARDROBE_N = 24
 REACTION = {"up": "liked", "down": "disliked", "swap": "wants it swapped"}
 
 
@@ -41,10 +42,10 @@ class Turn:
     refs: Refs = field(default_factory=Refs)
     rejected: set[str] = field(default_factory=set)
     current: list[dict] = field(default_factory=list)  # Look dicts on screen
-    after_card: bool = False  # this message answers the question card Ava just showed
     visible: set[str] = field(default_factory=set)  # product ids Claude may present this turn
     history: list[dict] = field(default_factory=list)
     crew: list[str] = field(default_factory=list)
+    wardrobe: list[dict] = field(default_factory=list)  # the shopper's own pieces Claude may build a look around
     trace: list[dict] = field(default_factory=list)
 
 
@@ -113,7 +114,6 @@ def load(sid: str, message: str, look_id: str | None = None, attachment_url: str
     use(t, "recipient" if b.get("for") == "other" and "recipient" in t.profiles else "shopper")
 
     rows = _assistant_rows(sid)
-    t.after_card = bool(rows and (rows[0]["content"] or {}).get("clarify"))
     t.refs = Refs(next((r["content"].get("ref_map") for r in rows if (r["content"] or {}).get("ref_map")), None))
     t.rejected = _rejected(sid)
     last_ids = next((r["content"].get("look_ids") for r in rows if (r["content"] or {}).get("look_ids")), []) or []
@@ -127,6 +127,11 @@ def load(sid: str, message: str, look_id: str | None = None, attachment_url: str
             t.current.append(lk)
             for it in lk.get("items") or []:
                 t.visible.add(_d(it.get("product")).get("id"))
+    if b.get("for") != "other":  # the shopper's own pieces get refs, so a look can be built around one (₹0, theirs)
+        from app import tryon
+        for w in [w for w in tryon.wardrobe(t.user_token) if w["allow_styling"] and w["tagged"]][:WARDROBE_N]:
+            t.wardrobe.append(w)
+            t.visible.add(w["id"])
     hist = db.q("select * from messages where session_id=? order by id desc limit ?", sid, HISTORY_N)
     t.history = list(reversed(hist))
     t.crew = _crew(sid)
@@ -169,8 +174,7 @@ def shopper_block(t: Turn) -> str:
         lines.append("basics: " + " · ".join(
             f"{f} {src[f]}" for f, have in (("wearer", b.get("for")), ("gender", b.get("gender") or rec.get("gender")),
                                              ("occasion", b.get("occasion")), ("budget", "budget_max" in b)) if have))
-    lines.append("shown in this chat so far: " + ("nothing yet" if first_ask else "looks or products (a new request still "
-                                                                            "gets its own card; refinements don't)"))
+    lines.append("shown in this chat so far: " + ("nothing yet" if first_ask else "looks or products"))
     for who, pr in t.profiles.items():
         d = pr["dna"]
         label = "style_dna" if who == "shopper" else f"recipient_dna ({rec.get('relation')})"
@@ -188,16 +192,23 @@ def shopper_block(t: Turn) -> str:
                      + (", ".join(nv) if nv else "nothing"))
     if t.crew:
         lines.append("crew_feedback: " + "; ".join(t.crew))
-    from app import tryon
-    if (w := tryon.wardrobe_line(t.user_token)) and b.get("for") != "other":
-        lines.append(w)
+    if t.wardrobe:
+        lines.append("wardrobe (pieces the shopper owns, usable in a look only when they name one or ask to style "
+                     "around it): " + "; ".join(_owned_line(w, t) for w in t.wardrobe))
     if t.minor:
         lines.append("minor: the wearer is 13-17, so virtual try-on is off for these looks")
     pg = sessions.photo_gender(t.session)
-    lines.append("photo: " + (f"on file, wears {pg}'s clothes" if t.session.get("photo_url") and pg else
-                              "on file" if t.session.get("photo_url") else "none yet")
-                 + " (cards show pieces flat; a look renders when the shopper taps Try on)")
+    lines.append("photo: " + (f"on file, wears {pg}'s clothes (looks render on it automatically)"
+                              if t.session.get("photo_url") and pg else
+                              "on file (looks render on it automatically)" if t.session.get("photo_url") else
+                              "none yet (cards show the pieces; the shopper can pick a model to see them on)"))
     return "<shopper>\n" + "\n".join(lines) + "\n</shopper>"
+
+
+def _owned_line(w: dict, t: Turn) -> str:
+    meta = ", ".join(str(x) for x in (w.get("color_family"), w.get("fabric"), w.get("formality") and
+                                       f"formality {w['formality']}", w.get("fit")) if x)
+    return f"{w['slot']} {t.refs.ref(w['id'])} {w['name']} [{meta}]"
 
 
 def _item_line(it: dict, t: Turn) -> str:
