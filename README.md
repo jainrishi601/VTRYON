@@ -62,7 +62,7 @@ uv run --project backend python scripts/prerender.py --yes
 <script src="https://<host>/widget.js"
         data-store-id="northline"
         data-api="https://<host>"
-        data-position="bottom-right"
+        data-position="bottom-center"
         data-cart-adapter="custom"></script>
 ```
 

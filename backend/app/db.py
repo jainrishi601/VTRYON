@@ -39,8 +39,19 @@ create table if not exists crew_member_renders(crew_id text, look_id text, membe
   primary key(crew_id, look_id, member_id));
 create table if not exists crew_comments(id text primary key, crew_id text, look_id text, slot text, member_id text,
   text text, reaction text, created_at text);
+create table if not exists users(id text primary key, email text unique, name text, pw_salt text, pw_hash text,
+  user_token text, created_at text);
+create table if not exists auth_sessions(token text primary key, user_id text, created_at text);
+create table if not exists profiles(user_id text primary key, data text, updated_at text);
+create table if not exists wardrobe(id text primary key, user_token text, image_url text, name text, slot text,
+  category text, colors text, color_family text, pattern text, fabric text, vibes text, formality integer, fit text,
+  occasions text, season text, allow_styling integer default 1, created_at text);
+create index if not exists wardrobe_token on wardrobe(user_token);
+create table if not exists daily_picks(user_id text, day text, kind text, look_id text, round integer default 0,
+  feedback text, created_at text, primary key(user_id, day, kind));
 """
-JSON_COLS = {"brief", "shopping_for", "items", "attrs", "content"}
+JSON_COLS = {"brief", "shopping_for", "items", "attrs", "content", "confirmed", "data", "colors", "vibes",
+             "occasions", "season"}
 
 _conn: sqlite3.Connection | None = None
 _path = None
@@ -57,9 +68,23 @@ def conn() -> sqlite3.Connection:
     return _conn
 
 
+# Columns added after the first release; `create table if not exists` won't add them to an existing DB.
+MIGRATIONS = [
+    "alter table sessions add column photo_gender text",  # women | men: which clothes an uploaded photo wears
+    "alter table looks add column model_id text",  # sample model the look renders on instead of the session photo
+    "alter table looks add column tip text",  # Claude's finishing tip for things the store doesn't sell
+    "alter table sessions add column confirmed text",  # brief fields the shopper confirmed in THIS chat (JSON list)
+]
+
+
 def init_db() -> None:
     conn().executescript(SCHEMA)
-    for d in ("renders", "photos", "share", "videos", "stub", "thumbs"):
+    for m in MIGRATIONS:
+        try:
+            conn().execute(m)
+        except sqlite3.OperationalError:  # duplicate column: already migrated
+            pass
+    for d in ("renders", "photos", "share", "videos", "stub", "thumbs", "wardrobe"):
         (config.MEDIA_DIR / d).mkdir(parents=True, exist_ok=True)
 
 

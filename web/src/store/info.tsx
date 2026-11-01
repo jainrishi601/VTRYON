@@ -111,7 +111,7 @@ export function Judge() {
 const EMBED = `<script src="https://cdn.elara.shop/widget.js"
   data-store-id="northline"
   data-api="https://api.elara.shop"
-  data-position="bottom-right"
+  data-position="bottom-center"
   data-cart-adapter="shopify"></script>`
 
 const FEED = `{

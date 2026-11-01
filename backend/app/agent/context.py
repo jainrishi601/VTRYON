@@ -36,9 +36,12 @@ class Turn:
     never: list[str] = field(default_factory=list)
     taste: dict = field(default_factory=dict)
     dna: dict = field(default_factory=dict)
+    # Both people's taste when a recipient exists: a gift must not bend the shopper's DNA, nor the reverse.
+    profiles: dict = field(default_factory=dict)  # "shopper" | "recipient" -> {scope, dna, taste, never}
     refs: Refs = field(default_factory=Refs)
     rejected: set[str] = field(default_factory=set)
     current: list[dict] = field(default_factory=list)  # Look dicts on screen
+    after_card: bool = False  # this message answers the question card Ava just showed
     visible: set[str] = field(default_factory=set)  # product ids Claude may present this turn
     history: list[dict] = field(default_factory=list)
     crew: list[str] = field(default_factory=list)
@@ -81,6 +84,17 @@ def _crew(sid: str) -> list[str]:
     return out
 
 
+def _profile(token: str, scope: str | None) -> dict:
+    return {"scope": scope, "dna": _d(dna.summary(token, scope=scope)), "taste": dict(dna.taste_vector(token, scope) or {}),
+            "never": list(dna.never_list(token, scope) or [])}
+
+
+def use(t: Turn, who: str) -> None:
+    """Point the turn at one person's taste (shopper or recipient)."""
+    pr = t.profiles.get(who) or t.profiles.get("shopper") or {}
+    t.scope, t.dna, t.taste, t.never = pr.get("scope"), pr.get("dna") or {}, pr.get("taste") or {}, list(pr.get("never") or [])
+
+
 def load(sid: str, message: str, look_id: str | None = None, attachment_url: str | None = None) -> Turn | None:
     s = sessions.get_session(sid)
     if not s:
@@ -90,15 +104,16 @@ def load(sid: str, message: str, look_id: str | None = None, attachment_url: str
     t.brief = _d(s.get("brief"))
     t.user_token = s.get("user_token") or ""
     b, rec = t.brief, _d(t.brief.get("recipient"))
-    t.scope = sessions.scope(s)
     t.target_gender = sessions.gender(s)
     t.minor = (rec if b.get("for") == "other" else b).get("age_range") == "13-17"
     t.budget = b.get("budget_max") or None
-    t.dna = _d(dna.summary(t.user_token, scope=t.scope))
-    t.never = list(dna.never_list(t.user_token, t.scope) or [])
-    t.taste = dict(dna.taste_vector(t.user_token, t.scope) or {})
+    t.profiles = {"shopper": _profile(t.user_token, None)}
+    if rec or b.get("for") == "other":  # same scope key the taste edges were written under
+        t.profiles["recipient"] = _profile(t.user_token, sessions.scope({"brief": {**b, "for": "other"}}))
+    use(t, "recipient" if b.get("for") == "other" and "recipient" in t.profiles else "shopper")
 
     rows = _assistant_rows(sid)
+    t.after_card = bool(rows and (rows[0]["content"] or {}).get("clarify"))
     t.refs = Refs(next((r["content"].get("ref_map") for r in rows if (r["content"] or {}).get("ref_map")), None))
     t.rejected = _rejected(sid)
     last_ids = next((r["content"].get("look_ids") for r in rows if (r["content"] or {}).get("look_ids")), []) or []
@@ -132,8 +147,12 @@ def _weights(d: dict, n: int = 4) -> tuple[str, str]:
 def shopper_block(t: Turn) -> str:
     b, rec = t.brief, _d(t.brief.get("recipient"))
     lines = []
+    ok = sessions.confirmed(t.session)
+    first_ask = not any((m["content"] or {}).get("look_ids") or (m["content"] or {}).get("product_ids")
+                        for m in t.history if m["role"] == "assistant")
     if not b:
-        lines.append("brief: none yet (no onboarding answers). Store sells women and men.")
+        lines.append("brief: nothing known yet (who it's for, gender, occasion and budget come from this chat). "
+                     "Store sells women and men.")
     else:
         if b.get("for") == "other":
             who = ", ".join(str(x) for x in (rec.get("relation"), rec.get("gender"), rec.get("age_range")) if x)
@@ -144,21 +163,40 @@ def shopper_block(t: Turn) -> str:
         occ = b.get("occasion") or "unknown"
         bud = f"{_money(t.budget)} per look" if t.budget else "no limit set"
         lines.append(f"occasion: {occ} · budget_max: {bud}" + (f" · preferred fit: {b['fit']}" if b.get("fit") else ""))
-    vl, vd = _weights(t.dna.get("vibes"))
-    cl, cd = _weights(t.dna.get("colors"))
-    if vl or vd or cl or cd or t.dna.get("name"):
-        parts = [f"name “{t.dna['name']}”" if t.dna.get("name") else "",
-                 f"likes {vl}" if vl else "", f"dislikes {vd}" if vd else "",
-                 f"colours liked {cl}" if cl else "", f"colours disliked {cd}" if cd else ""]
-        lines.append("style_dna: " + " · ".join(p for p in parts if p))
-    else:
-        lines.append("style_dna: none yet")
-    lines.append("never: " + (", ".join(t.never) if t.never else "nothing"))
+    if b:
+        src = {f: ("confirmed in this chat" if f in ok else "remembered from an earlier chat, NOT confirmed")
+               for f in ("wearer", "gender", "occasion", "budget")}
+        lines.append("basics: " + " · ".join(
+            f"{f} {src[f]}" for f, have in (("wearer", b.get("for")), ("gender", b.get("gender") or rec.get("gender")),
+                                             ("occasion", b.get("occasion")), ("budget", "budget_max" in b)) if have))
+    lines.append("shown in this chat so far: " + ("nothing yet" if first_ask else "looks or products (a new request still "
+                                                                            "gets its own card; refinements don't)"))
+    for who, pr in t.profiles.items():
+        d = pr["dna"]
+        label = "style_dna" if who == "shopper" else f"recipient_dna ({rec.get('relation')})"
+        vl, vd = _weights(d.get("vibes"))
+        cl, cd = _weights(d.get("colors"))
+        if vl or vd or cl or cd or d.get("name"):
+            parts = [f"name “{d['name']}”" if d.get("name") else "",
+                     f"likes {vl}" if vl else "", f"dislikes {vd}" if vd else "",
+                     f"colours liked {cl}" if cl else "", f"colours disliked {cd}" if cd else ""]
+            lines.append(f"{label}: " + " · ".join(p for p in parts if p))
+        else:
+            lines.append(f"{label}: none yet")
+        nv = pr["never"]
+        lines.append(("never" if who == "shopper" else f"recipient_never ({rec.get('relation')})") + ": "
+                     + (", ".join(nv) if nv else "nothing"))
     if t.crew:
         lines.append("crew_feedback: " + "; ".join(t.crew))
+    from app import tryon
+    if (w := tryon.wardrobe_line(t.user_token)) and b.get("for") != "other":
+        lines.append(w)
     if t.minor:
         lines.append("minor: the wearer is 13-17, so virtual try-on is off for these looks")
-    lines.append("photo: " + ("on file (looks render on it)" if t.session.get("photo_url") else "none yet"))
+    pg = sessions.photo_gender(t.session)
+    lines.append("photo: " + (f"on file, wears {pg}'s clothes" if t.session.get("photo_url") and pg else
+                              "on file" if t.session.get("photo_url") else "none yet")
+                 + " (cards show pieces flat; a look renders when the shopper taps Try on)")
     return "<shopper>\n" + "\n".join(lines) + "\n</shopper>"
 
 
@@ -193,8 +231,10 @@ def history_block(t: Turn) -> str:
             s = "Ava: " + (c.get("text") or "").strip()
             if c.get("summary"):
                 s += f" [showed {c['summary']}]"
-            if c.get("clarify"):
-                s += f" [asked: {c['clarify']['question']} — chips: {' / '.join(c['clarify']['chips'])}]"
+            for q in (c.get("clarify") or {}).get("questions") or []:
+                s += f" [asked: {q['question']} — options: {' / '.join(o['label'] for o in q['options'])}]"
+            if (c.get("clarify") or {}).get("chips"):  # pre-card messages
+                s += f" [asked: {c['clarify'].get('question', '')} — chips: {' / '.join(c['clarify']['chips'])}]"
             lines.append(s)
     return "<history>\n" + ("\n".join(lines) if lines else "(start of chat)") + "\n</history>"
 

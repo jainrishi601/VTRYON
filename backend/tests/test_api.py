@@ -65,7 +65,7 @@ def test_api3_photo_validation(c):
 def test_api4_sample_model_photo(c):
     sid = c.post("/api/session", json={}).json()["session_id"]
     r = c.post(f"/api/session/{sid}/photo", json={"sample_model_id": "w1"})
-    assert r.json() == {"photo_url": "/media/models/w1.jpg"}
+    assert r.json() == {"photo_url": "/media/models/w1.jpg", "photo_gender": "women"}
     s = c.get(f"/api/session/{sid}").json()
     assert s["sample_model_id"] == "w1"
     assert c.post(f"/api/session/{sid}/photo", json={"sample_model_id": "zz"}).status_code == 422

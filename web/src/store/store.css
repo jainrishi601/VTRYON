@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @source "../store";
+@source "../tryon";
 
 @theme {
   --color-bg: #ffffff;

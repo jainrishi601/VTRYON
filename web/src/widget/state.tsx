@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import type { Brief, CartItem, Crew, DnaSummary, Look, Product, SampleModel, Session, StoreInfo } from '../shared/types'
+import type { Answer, Brief, CartItem, Clarify, Crew, DnaSummary, Look, Product, ProductCard, SampleModel, Session, StoreInfo } from '../shared/types'
 import type { ElaraOpenOptions } from '../shared/global'
 import { abs, api, ApiError, ls, ss, stream } from './api'
 
@@ -13,17 +13,24 @@ export interface Msg {
   statuses?: StatusLine[]
   startedAt?: number
   doneIn?: number | null
-  clarify?: { question: string; chips: string[] } | null
+  clarify?: Clarify | null
   lookIds?: string[]
+  products?: ProductCard[]
+  tryNext?: string[]
   error?: string | null
-  retry?: { message: string; lookId?: string }
+  retry?: { message: string; lookId?: string; answers?: Answer[] }
   streaming?: boolean
 }
+// The try-on sheet: a look waiting for a usable photo, or single pieces tried on with what pairs best.
+export type TryOnReq = { kind: 'look'; lookId: string } | { kind: 'items'; products: Product[]; fromLookId?: string; name?: string }
 export interface Cfg { storeId: string; cartAdapter: string; position: string }
 interface Toast { id: number; text: string; action?: { label: string; fn: () => void } }
 
 const uid = () => Math.random().toString(36).slice(2, 10)
-export const TERMINAL = new Set(['ready', 'failed'])
+export const TERMINAL = new Set(['ready', 'failed', 'idle'])
+/** The look can't render on this photo: it's cut for the other gender (a sample-model override fixes that). */
+export const mismatch = (l: Look | { gender: string | null; model_id?: string | null }, s: Session | null) =>
+  !!(l.gender && !l.model_id && s?.photo_gender && s.photo_gender !== l.gender)
 
 // Bridge for the non-React entry points (window.Elara, URL params, [data-elara-tryon]).
 const queue: (ElaraOpenOptions | undefined)[] = []
@@ -58,8 +65,9 @@ function useElaraState(cfg: Cfg) {
   const [viewer, setViewer] = useState<string | null>(null)
   const [swap, setSwap] = useState<{ lookId: string; slot: string } | null>(null)
   const [share, setShare] = useState<{ lookId: string } | null>(null)
+  const [tryon, setTryon] = useState<TryOnReq | null>(null)
   // Switching tabs closes any overlay (viewer, swap drawer, share sheet) so each tab starts clean.
-  const setTab = useCallback((t: Tab) => { setTabRaw(t); setViewer(null); setSwap(null); setShare(null) }, [])
+  const setTab = useCallback((t: Tab) => { setTabRaw(t); setViewer(null); setSwap(null); setShare(null); setTryon(null) }, [])
   const [toast, setToast] = useState<Toast | null>(null)
   const [crewId, setCrewId, crewIdRef] = useStateRef<string | null>(ls.get('elara.crew'))
   const [crew, setCrew] = useState<Crew | null>(null)
@@ -99,10 +107,10 @@ function useElaraState(cfg: Cfg) {
   }, [setSession])
 
   const restore = useCallback(async (sid: string) => {
-    const hist = await api<{ messages: { role: string; text: string; looks?: Look[]; clarify?: Msg['clarify'] }[] }>(`/api/session/${sid}/messages`).catch(() => ({ messages: [] }))
+    const hist = await api<{ messages: { role: string; text: string; looks?: Look[]; products?: ProductCard[]; clarify?: Clarify; try_next?: string[] }[] }>(`/api/session/${sid}/messages`).catch(() => ({ messages: [] }))
     const msgs: Msg[] = hist.messages.map((m) => {
       m.looks?.forEach((l) => upsertLook(l))
-      return { id: uid(), role: m.role === 'user' ? 'user' : 'agent', text: m.text ?? '', lookIds: m.looks?.map((l) => l.id), clarify: m.clarify ?? null }
+      return { id: uid(), role: m.role === 'user' ? 'user' : 'agent', text: m.text ?? '', lookIds: m.looks?.map((l) => l.id), products: m.products, tryNext: m.try_next, clarify: m.clarify ?? null }
     })
     setMessages(msgs)
   }, [upsertLook])
@@ -120,6 +128,12 @@ function useElaraState(cfg: Cfg) {
   }, [adoptSession])
 
   const boot = useCallback(() => {
+    const stored = ls.get('elara.token')
+    if (stored && stored !== token.current) { // TRYON login (same site) switched the shopper: start over as them
+      token.current = stored
+      booting.current = null
+      setSession(null); setMessages([]); setLooks({}); setViewer(null); setSwap(null); setTryon(null); setFocusLookId(null)
+    }
     if (booting.current) return booting.current
     booting.current = (async () => {
       setStage('boot')
@@ -132,34 +146,37 @@ function useElaraState(cfg: Cfg) {
           s = await api<Session>(`/api/session/${sid}`).catch(() => null)
           if (s && s.user_token !== token.current) s = null
         }
+        // Chat first: who it's for, gender, occasion and budget come from the question card when Ava needs them,
+        // and the photo only when the shopper taps Try on.
         if (s) {
           adoptSession(s)
           await restore(s.id)
-          setStage(s.brief ? (s.photo_url ? 'chat' : 'photo') : 'who')
         } else {
-          const { s: ns, returning, profile } = await newSession()
-          if (returning && profile?.brief) {
-            const occ = profile.last_occasion || profile.brief.occasion
-            setMessages([{ id: uid(), role: 'agent', text: `Welcome back. Still shopping for the ${occ.toLowerCase()}, or something new?`, clarify: { question: '', chips: [`Still the ${occ.toLowerCase()}`, 'Something new'] } }])
-            setStage(ns.photo_url ? 'chat' : 'photo')
-          } else setStage(ns.brief ? (ns.photo_url ? 'chat' : 'photo') : 'who')
+          const { returning, profile } = await newSession()
+          const occ = profile?.last_occasion || profile?.brief?.occasion
+          if (returning && occ) {
+            setMessages([{ id: uid(), role: 'agent', text: `Welcome back. Still shopping for the ${occ.toLowerCase()}, or something new?`,
+              clarify: { questions: [{ field: 'occasion', question: 'What are we dressing for?', options: [{ label: `Still the ${occ.toLowerCase()}`, value: occ }] }] } }])
+          }
         }
+        setStage('chat')
       } catch {
         booting.current = null
         setStage('error')
       }
     })()
     return booting.current
-  }, [adoptSession, newSession, restore, setStage])
+  }, [adoptSession, newSession, restore, setStage, setSession, setLooks])
 
   // ---------- chat ----------
   const patchMsg = useCallback((id: string, f: (m: Msg) => Msg) => setMessages((ms) => ms.map((m) => (m.id === id ? f(m) : m))), [])
 
-  const send = useCallback(async (message: string, opts: { lookId?: string | null } = {}) => {
+  const send = useCallback(async (message: string, opts: { lookId?: string | null; answers?: Answer[] } = {}) => {
     const s = sessionRef.current
     if (!s || busyRef.current || !message.trim()) return
     setBusy(true)
     const lookId = opts.lookId ?? undefined
+    const answers = opts.answers?.length ? opts.answers : undefined
     const aid = uid()
     const t0 = performance.now()
     setMessages((ms) => [
@@ -170,7 +187,7 @@ function useElaraState(cfg: Cfg) {
     const turnLooks = new Set<string>()
     let gotSomething = false
     try {
-      await stream('/api/chat', { session_id: s.id, message: message.trim(), ...(lookId ? { look_id: lookId } : {}) }, (ev, data) => {
+      await stream('/api/chat', { session_id: s.id, message: message.trim(), ...(lookId ? { look_id: lookId } : {}), ...(answers ? { answers } : {}) }, (ev, data) => {
         gotSomething = true
         if (ev === 'status') {
           patchMsg(aid, (m) => {
@@ -187,21 +204,27 @@ function useElaraState(cfg: Cfg) {
         } else if (ev === 'looks') {
           ;(data.looks as Look[]).forEach((l) => { upsertLook(l); turnLooks.add(l.id); streamingIds.current.add(l.id) })
           patchMsg(aid, (m) => ({ ...m, lookIds: [...(m.lookIds ?? []), ...(data.looks as Look[]).map((l) => l.id)] }))
+        } else if (ev === 'suggest') {
+          patchMsg(aid, (m) => ({ ...m, tryNext: data.items as string[] }))
+        } else if (ev === 'products') {
+          patchMsg(aid, (m) => ({ ...m, products: data.products as ProductCard[] }))
         } else if (ev === 'look') {
           upsertLook(data.look)
         } else if (ev === 'error') {
-          patchMsg(aid, (m) => ({ ...m, error: data.message || 'Ava lost the thread there.', retry: { message, lookId } }))
+          patchMsg(aid, (m) => ({ ...m, error: data.message || 'Ava lost the thread there.', retry: { message, lookId, answers } }))
         }
       })
       if (!gotSomething) throw new Error('empty')
     } catch {
-      patchMsg(aid, (m) => ({ ...m, error: 'Ava lost the thread there. Your message is safe.', retry: { message, lookId } }))
+      patchMsg(aid, (m) => ({ ...m, error: 'Ava lost the thread there. Your message is safe.', retry: { message, lookId, answers } }))
     } finally {
       turnLooks.forEach((id) => streamingIds.current.delete(id))
       patchMsg(aid, (m) => ({ ...m, streaming: false, doneIn: (performance.now() - t0) / 1000, statuses: m.statuses?.map((x) => ({ ...x, state: 'done' as const })) }))
       setBusy(false)
+      // Answers may have filled the brief (gender, occasion): refresh it so the photo step filters models right.
+      if (answers) api<Session>(`/api/session/${s.id}`).then((ns) => { setSession(ns); setBrief(ns.brief) }, () => {})
     }
-  }, [busyRef, patchMsg, sessionRef, setBusy, upsertLook])
+  }, [busyRef, patchMsg, sessionRef, setBusy, setSession, upsertLook])
 
   // Poll looks whose render (or video) is still in flight and not covered by an open stream.
   useEffect(() => {
@@ -226,14 +249,18 @@ function useElaraState(cfg: Cfg) {
     return () => clearInterval(iv)
   }, [looksRef, upsertLook])
 
-  const retryRender = useCallback(async (id: string) => {
-    firstSeen.current.delete(id)
+  /** Try on a whole look. Without a photo that can wear it, the try-on sheet asks first. */
+  const renderLook = useCallback(async (id: string, modelId?: string) => {
     const l = looksRef.current[id]
-    if (l) upsertLook({ ...l, render: { ...l.render, status: 'pending', error: null } })
-    try { upsertLook(await api<Look>(`/api/looks/${id}/render`, { body: {} })) } catch (e) {
+    const s = sessionRef.current
+    if (!modelId && l && (!s?.photo_url || mismatch(l, s))) { setTryon({ kind: 'look', lookId: id }); return }
+    firstSeen.current.delete(id)
+    if (l) upsertLook({ ...l, render: { ...l.render, status: 'pending', error: null, code: null } })
+    try { upsertLook(await api<Look>(`/api/looks/${id}/render`, { body: modelId ? { model_id: modelId } : {} })) } catch (e) {
       if (l) upsertLook({ ...l, render: { ...l.render, status: 'failed', error: (e as ApiError).message } })
     }
-  }, [looksRef, upsertLook])
+  }, [looksRef, sessionRef, upsertLook])
+  const retryRender = renderLook
 
   const requestVideo = useCallback(async (id: string) => {
     try {
@@ -253,10 +280,11 @@ function useElaraState(cfg: Cfg) {
   const tryOn = useCallback(async (productIds: string[], name?: string) => {
     const s = sessionRef.current
     if (!s) return null
-    if (!s.photo_url) {
-      setPendingTryon(productIds)
-      setTab('chat')
-      setStage('photo')
+    const ps = productIds.map((id) => Object.values(looksRef.current).flatMap((l) => l.items.map((i) => i.product)).find((p) => p.id === id)).filter(Boolean) as Product[]
+    const g = ps.find((p) => p.gender !== 'unisex')?.gender ?? null
+    if (!s.photo_url || mismatch({ gender: g }, s)) {
+      const all = ps.length === productIds.length ? ps : (await Promise.all(productIds.map((id) => api<Product>(`/api/products/${id}`).catch(() => null)))).filter(Boolean) as Product[]
+      setTryon({ kind: 'items', products: all, name })
       return null
     }
     try {
@@ -269,7 +297,7 @@ function useElaraState(cfg: Cfg) {
       showToast((e as ApiError).message)
       return null
     }
-  }, [sessionRef, setPendingTryon, setStage, showToast, upsertLook])
+  }, [looksRef, sessionRef, showToast, upsertLook])
 
   const addToCart = useCallback(async (items: CartItem[], lookId?: string) => {
     if (cfg.cartAdapter === 'shopify') {
@@ -282,8 +310,9 @@ function useElaraState(cfg: Cfg) {
     if (lookId) api(`/api/looks/${lookId}/feedback`, { body: { kind: 'cart' } }).catch(() => {})
   }, [cfg.cartAdapter, showToast])
 
+  // The shopper's own wardrobe pieces are part of the look, never part of the order.
   const addLookToCart = useCallback((l: Look, verdict?: string) => addToCart(
-    l.items.map((i) => ({ product_id: i.product.id, title: i.product.title, price: i.product.price, image_url: i.product.image_url, size: i.product.sizes_in_stock.includes('M') ? 'M' : i.product.sizes_in_stock[0], look_name: l.name, styled_with: 'Ava', crew_verdict: verdict })),
+    l.items.filter((i) => !i.product.owned).map((i) => ({ product_id: i.product.id, title: i.product.title, price: i.product.price, image_url: i.product.image_url, size: i.product.sizes_in_stock.includes('M') ? 'M' : i.product.sizes_in_stock[0], look_name: l.name, styled_with: 'Ava', crew_verdict: verdict })),
     l.id,
   ), [addToCart])
 
@@ -401,7 +430,7 @@ function useElaraState(cfg: Cfg) {
     ss.set('elara.sid', null)
     token.current = null
     booting.current = null
-    setSession(null); setDna(null); setBrief(null); setMessages([]); setLooks({}); setViewer(null); setSwap(null); setShare(null)
+    setSession(null); setDna(null); setBrief(null); setMessages([]); setLooks({}); setViewer(null); setSwap(null); setShare(null); setTryon(null)
     setCrew(null); setCrewId(null); setFocusLookId(null); setTab('chat')
   }, [setCrewId, setLooks, setSession])
 
@@ -418,8 +447,8 @@ function useElaraState(cfg: Cfg) {
     if (busyRef.current) return
     setMessages([]); setFocusLookId(null); setViewer(null)
     try {
-      const { s } = await newSession()
-      setStage(s.photo_url ? 'chat' : s.brief ? 'photo' : 'who')
+      await newSession()
+      setStage('chat')
     } catch { showToast('We couldn’t start a new chat. Try again.') }
   }, [busyRef, newSession, setStage, showToast])
 
@@ -438,15 +467,9 @@ function useElaraState(cfg: Cfg) {
     }
     if (o.message) {
       setTab('chat')
-      if (sessionRef.current?.photo_url) {
-        setStage('chat')
-        send(o.message)
-      } else {
-        setPendingMessage(o.message)
-        setStage('photo')
-      }
+      send(o.message)
     }
-  }, [boot, fetchLook, send, sessionRef, setOpen, setPendingMessage, setStage, stageRef, tryOn])
+  }, [boot, fetchLook, send, setOpen, stageRef, tryOn])
 
   const openRef = useRef(openWith)
   openRef.current = openWith
@@ -462,7 +485,7 @@ function useElaraState(cfg: Cfg) {
   return {
     cfg, open, setOpen, tab, setTab, stage, setStage, store, models, session, setSession, dna, setDna, brief, setBrief,
     messages, setMessages, looks, upsertLook, busy, send, focusLookId, setFocusLookId, viewer, setViewer, swap, setSwap,
-    share, setShare, toast, showToast, setToast, crewId, crew, crewError, loadCrew, shareLook, comment, joinCrew, unread, markCrewSeen,
+    share, setShare, tryon, setTryon, renderLook, toast, showToast, setToast, crewId, crew, crewError, loadCrew, shareLook, comment, joinCrew, unread, markCrewSeen,
     studioSeed, setStudioSeed, pendingTryon, pendingMessage, bagBump, boot, retryRender, requestVideo, fetchLook, tryOn,
     addToCart, addLookToCart, swapTo, photoDone, downloadData, forgetMe, newChat, openWith, token,
   }

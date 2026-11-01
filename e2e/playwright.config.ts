@@ -1,6 +1,9 @@
 import { defineConfig, devices } from '@playwright/test'
 
-// Runs against the built store (vite preview :4173) + the FastAPI backend (:8000) with zero-unit renders.
+// Runs against the built store (vite preview :4173) + the FastAPI backend with zero-unit renders.
+// E2E_API_PORT moves the backend off :8000 when something else already listens there.
+const API_PORT = process.env.E2E_API_PORT ?? '8000'
+
 export default defineConfig({
   testDir: './tests',
   timeout: 120_000,
@@ -21,9 +24,9 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: 'uv run uvicorn app.main:app --port 8000',
+      command: `uv run uvicorn app.main:app --port ${API_PORT}`,
       cwd: '../backend',
-      url: 'http://localhost:8000/api/status',
+      url: `http://localhost:${API_PORT}/api/status`,
       // Own DB + never reuse a running (possibly live, unit-spending) backend.
       env: { YOUCAM_DEMO_MODE: '1', RENDER_STUB: '1', ELARA_DB_PATH: 'var/e2e/elara.db' },
       reuseExistingServer: false,
@@ -32,6 +35,7 @@ export default defineConfig({
     {
       command: 'pnpm build && pnpm preview',
       cwd: '../web',
+      env: { ELARA_API: `http://localhost:${API_PORT}` },
       url: 'http://localhost:4173',
       reuseExistingServer: true,
       timeout: 120_000,

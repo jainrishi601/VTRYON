@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app import catalog, config, crew, dna, looks, scoring, sessions, youcam
+from app import tryon as platform
 from app.db import ex, init_db, q, q1
 
 
@@ -83,6 +84,11 @@ class TryonIn(BaseModel):
     session_id: str
     product_ids: list[str]
     name: str | None = None
+    model_id: str | None = None  # render on this sample model instead of the session photo
+
+
+class RenderIn(BaseModel):
+    model_id: str | None = None
 
 
 class SwapIn(BaseModel):
@@ -188,7 +194,11 @@ async def get_session(sid: str):
 @app.patch("/api/session/{sid}")
 async def patch_session(sid: str, body: BriefIn):
     _session(sid)
-    ex("update sessions set brief=? where id=?", body.brief.model_dump(by_alias=True, exclude_none=True), sid)
+    b = body.brief.model_dump(by_alias=True, exclude_none=True)
+    ex("update sessions set brief=? where id=?", b, sid)
+    # The shopper filled these in themselves (onboarding form), so they count as confirmed for this chat.
+    sessions.confirm(sid, [f for f, k in (("wearer", "for"), ("gender", "gender"), ("occasion", "occasion"),
+                                          ("budget", "budget_max")) if k in b or (f == "gender" and b.get("recipient"))])
     return sessions.session_json(_session(sid))
 
 
@@ -198,9 +208,10 @@ async def set_photo(sid: str, request: Request):
     fields, photo = await _photo_from(request)
     if not photo:
         err(422, "photo_invalid", "Add a photo or pick a sample model.")
-    ex("update sessions set photo_url=?, src_url=?, sample_model_id=? where id=?", photo[0], photo[1],
-       fields.get("sample_model_id") if photo[1].startswith("model:") else None, sid)
-    return {"photo_url": photo[0]}
+    pg = fields.get("photo_gender") if fields.get("photo_gender") in ("women", "men") else None
+    ex("update sessions set photo_url=?, src_url=?, sample_model_id=?, photo_gender=? where id=?", photo[0], photo[1],
+       fields.get("sample_model_id") if photo[1].startswith("model:") else None, pg, sid)
+    return {"photo_url": photo[0], "photo_gender": sessions.photo_gender(_session(sid))}
 
 
 # Style DNA picker -------------------------------------------------------------------------------------------------
@@ -235,9 +246,9 @@ async def get_look(lid: str):
 
 
 @app.post("/api/looks/{lid}/render")
-async def render_look(lid: str):
+async def render_look(lid: str, body: RenderIn | None = None):
     _look(lid)
-    looks.start_render(lid)
+    looks.start_render(lid, model_id=body.model_id if body else None)
     return looks.look_json(lid)
 
 
@@ -250,7 +261,7 @@ async def tryon(body: TryonIn):
     ps = list(by_slot.values())
     why = ps[0].get("one_liner") or "" if len(ps) == 1 else "The pieces you picked, styled together."
     lk = looks.create_look(body.session_id, body.name or "Studio Pick", why, [(p["slot"], p["id"]) for p in ps])
-    looks.start_render(lk["id"])
+    looks.start_render(lk["id"], model_id=body.model_id)
     return looks.look_json(lk["id"])
 
 
@@ -259,15 +270,25 @@ async def alternatives(lid: str, slot: str):
     lk = _look(lid)
     s = sessions.get_session(q1("select session_id from looks where id=?", lid)["session_id"]) or {}
     tok, sc = s.get("user_token"), sessions.scope(s)
-    items = scoring.alternatives(lk["items"], slot, lk["budget_max"], (s.get("brief") or {}).get("occasion"),
-                                 dna.taste_vector(tok, sc) if tok else None, never=dna.never_list(tok, sc) if tok else ())
-    return {"slot": slot, "items": items}
+    occasion, taste = (s.get("brief") or {}).get("occasion"), dna.taste_vector(tok, sc) if tok else None
+    items = scoring.alternatives(lk["items"], slot, lk["budget_max"], occasion, taste,
+                                 never=dna.never_list(tok, sc) if tok else ())
+    # The shopper's own pieces (TRYON wardrobe) first, scored the same way; only for their own looks, not gifts.
+    owned = platform.owned_pairs(tok, lk["items"], slot, occasion, taste, sessions.gender(s), limit=8) if not sc else []
+    has = bool(not sc and tok and platform.for_token(tok))
+    return {"slot": slot, "items": owned + items, "wardrobe": {"account": has, "owned": len(owned)}}
 
 
 @app.post("/api/looks/{lid}/swap")
 async def swap(lid: str, body: SwapIn):
     _look(lid)
-    catalog.get(body.product_id) or err(404, "product_not_found", "That piece isn't in the catalogue.")
+    if body.product_id.startswith("w_"):  # swap in one of the shopper's own pieces: theirs only
+        w = platform.wardrobe_item(body.product_id)
+        s = sessions.get_session(q1("select session_id from looks where id=?", lid)["session_id"]) or {}
+        if not w or w["user_token"] != s.get("user_token"):
+            err(404, "product_not_found", "That piece isn't in your wardrobe.")
+    else:
+        catalog.get(body.product_id) or err(404, "product_not_found", "That piece isn't in the catalogue.")
     return looks.swap(lid, body.slot, body.product_id)
 
 
@@ -409,6 +430,10 @@ Demo mode: {"on" if youcam.demo_mode() else "off"}.</p>
 <table><tr><th>#</th><th>time (UTC)</th><th>category</th><th>source</th><th>status</th><th>units</th><th>hits</th>
 <th>latency</th><th>error</th><th>result</th></tr>{rows}</table>"""
 
+
+from app.tryon_routes import router as tryon_router  # noqa: E402
+
+app.include_router(tryon_router)
 
 try:
     from app.agent.routes import router as agent_router

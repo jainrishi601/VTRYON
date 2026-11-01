@@ -12,13 +12,13 @@ function mount() {
   if (document.getElementById('elara-root')) return
   const d = script?.dataset ?? {}
   setBase(d.api ?? (script?.src ? new URL(script.src, location.href).origin : ''))
-  const cfg: Cfg = { storeId: d.storeId ?? 'default', cartAdapter: d.cartAdapter ?? 'custom', position: d.position ?? 'bottom-right' }
+  const cfg: Cfg = { storeId: d.storeId ?? 'default', cartAdapter: d.cartAdapter ?? 'custom', position: d.position ?? 'bottom-center' }
 
   // @font-face doesn't work inside a shadow root: load fonts on the host document once.
-  if (!document.querySelector('link[href*="Instrument+Serif"]')) {
+  if (!document.querySelector('link[href*="family=Outfit"]')) {
     const l = document.createElement('link')
     l.rel = 'stylesheet'
-    l.href = 'https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap'
+    l.href = 'https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap'
     document.head.appendChild(l)
   }
   // Same for @property (Tailwind v4 relies on it for shadows/rings/transforms): register on the document.
@@ -66,6 +66,7 @@ function mount() {
 
   if (crew) controller.open({ tab: 'crew' })
   else if (params.get('look')) controller.open({ lookId: params.get('look')! })
+  else if (params.get('ask')) controller.open({ message: params.get('ask')! }) // e.g. TRYON's "Style this" on a wardrobe piece
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount)

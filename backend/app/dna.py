@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from app import catalog, config
 from app.db import ex, now, q, q1
 
-WEIGHTS = {"tried_on": 0.3, "liked_outfit": 0.8, "disliked_outfit": -0.8, "added_to_cart": 1.0, "friend_liked": 0.3,
+WEIGHTS = {"wore": 0.6, "tried_on": 0.3, "liked_outfit": 0.8, "disliked_outfit": -0.8, "added_to_cart": 1.0, "friend_liked": 0.3,
            "friend_disliked": -0.3, "swapped_out": -0.7, "swapped_in": 0.7}
 VIBE_NOUN = {"minimal": "Minimal", "bold": "Statement", "classic": "Classic", "street": "Street", "boho": "Boho",
              "sporty": "Sport", "romantic": "Romantic", "edgy": "Edge"}

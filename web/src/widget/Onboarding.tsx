@@ -196,7 +196,7 @@ function Who() {
 }
 
 // ---------- photo ----------
-async function prepare(file: File): Promise<Blob> {
+export async function prepare(file: File): Promise<Blob> {
   if (!/^image\/(jpeg|png)$/.test(file.type)) throw new Error('That file isn’t a photo we can use. Try a JPG or PNG.')
   const bmp = await createImageBitmap(file).catch(() => null)
   if (!bmp) throw new Error('We couldn’t open that photo. Try a JPG or PNG.')

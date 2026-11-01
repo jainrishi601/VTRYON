@@ -73,7 +73,8 @@ Env vars live in `.env` at the repo root; `.env.example` lists them. The backend
 4. **Never dead-end a turn.** If Claude fails (timeout, invalid output twice, no key), the deterministic fallback composer answers. An empty reply is a bug.
 
 **Agent behaviour**
-5. **One clarifying question per turn, maximum.** Never re-ask what the brief, Style DNA or history already answers. See `AGENT_SPEC.md` §Clarifier.
+5. **One question card per turn, two questions maximum.** Never re-ask what the brief, Style DNA or history already answers. See `AGENT_SPEC.md` §Clarifier.
+5b. **Never render clothes on a photo of the other gender.** Looks start flat and render only on Try on; `looks.start_render` refuses a gender mismatch, and the try-on sheet offers a matching sample model instead.
 6. **No regex or keyword tables over user text for meaning.** Claude does intent. (Lookup tables over *catalogue* fields at ingestion are fine.)
 
 **YouCam**

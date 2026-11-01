@@ -14,6 +14,13 @@ def plan(items: list[dict]) -> list[dict]:
             for s in order if s in by and by[s].get("vto_ready", True) and by[s].get("vto_ref_url")]
 
 
+def wearable_same(parent_items: list[dict], items: list[dict]) -> bool:
+    """True when only unrendered slots (bag, accessory) differ, so the parent's render image is still right."""
+    def worn(xs):
+        return {it["slot"]: it["product"]["id"] for it in xs if it["slot"] in SLOT_CATEGORY}
+    return worn(parent_items) == worn(items) and bool(worn(items))
+
+
 def swap_plan(parent_items: list[dict], items: list[dict]) -> list[dict] | None:
     """One step when exactly one top/bottom/layer changed; None means re-plan the whole look."""
     a = {it["slot"]: it["product"]["id"] for it in parent_items}

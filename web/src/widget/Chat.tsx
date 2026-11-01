@@ -1,19 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowUp, Check, ChevronDown, Film, Maximize2, RefreshCw, Users, X, Play } from 'lucide-react'
-import type { Look } from '../shared/types'
+import { ArrowUpRight, Check, ChevronDown, ChevronLeft, ChevronRight, Film, Maximize2, Pencil, Play, RefreshCw, ScanFace, SendHorizontal, ShoppingBag, ShoppingCart, Users, X } from 'lucide-react'
+import type { Answer, Clarify, Look, Product, ProductCard } from '../shared/types'
 import { inr, catName } from '../shared/format'
 import { abs } from './api'
 import { useElara, type Msg } from './state'
-import { Collage, RevealImg, Ring, ScoreBadge, Silhouette, lookAlt, pieceName } from './ui'
-
-const PROMPTS = [
-  'Goa beach trip, under ₹7,000',
-  'Make the first look more formal',
-  'A farewell outfit for my brother',
-  'Show me something in blue',
-  'What goes with wide linen trousers?',
-  'Something for a sangeet, not too heavy',
-]
+import { Collage, RenderProgress, RevealImg, Ring, ScoreBadge, WEARABLE, lookAlt, pieceName } from './ui'
 
 export function Chat() {
   const e = useElara()
@@ -27,31 +18,34 @@ export function Chat() {
   }, [e.messages, e.looks])
 
   const focusLook = e.focusLookId ? e.looks[e.focusLookId] : null
-  const send = (text: string) => {
+  const send = (text: string, answers?: Answer[]) => {
     stick.current = true
-    e.send(text, { lookId: e.focusLookId })
+    e.send(text, { lookId: e.focusLookId, answers })
   }
+  const last = e.messages[e.messages.length - 1]
+  const card = last?.role === 'agent' && !e.busy && last.clarify?.questions?.length ? last.clarify : null
 
   return (
     <div className="flex-1 min-h-0 flex flex-col" data-testid="chat">
       <div
         ref={listRef}
         onScroll={(ev) => { const el = ev.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120 }}
-        className="flex-1 min-h-0 overflow-y-auto thin-scroll px-4 sm:px-6 pt-6 pb-4 space-y-7"
+        className="flex-1 min-h-0 overflow-y-auto thin-scroll px-4 sm:px-5 py-5 space-y-6"
         aria-live="polite"
       >
-        {e.messages.length === 0 && <Empty onPick={send} />}
+        {e.messages.length === 0 && <Empty onPick={(t) => send(t)} />}
         {e.messages.map((m, i) =>
           m.role === 'user' ? (
             <div key={m.id} className="flex justify-end fade-in">
-              <p className="max-w-[80%] bg-ink text-white text-[15px] leading-[22px] px-4 py-2.5 rounded-[20px] rounded-br-[6px] whitespace-pre-wrap" data-testid="user-msg">{m.text}</p>
+              <p className="max-w-[80%] bg-ink text-white text-[14px] font-medium leading-[21px] px-4 py-3 rounded-2xl whitespace-pre-wrap" data-testid="user-msg">{m.text}</p>
             </div>
           ) : (
-            <AgentMsg key={m.id} m={m} last={i === e.messages.length - 1} onChip={send} onElse={() => inputRef.current?.focus()} />
+            <AgentMsg key={m.id} m={m} last={i === e.messages.length - 1} onPick={(t) => send(t)} />
           ),
         )}
       </div>
-      <Composer inputRef={inputRef} onSend={send} focusLook={focusLook} />
+      {card && <ClarifyCard key={last.id} card={card} onDone={send} />}
+      <Composer inputRef={inputRef} onSend={(t) => send(t)} focusLook={focusLook} />
     </div>
   )
 }
@@ -59,14 +53,16 @@ export function Chat() {
 function Empty({ onPick }: { onPick: (s: string) => void }) {
   const e = useElara()
   const occ = e.brief?.occasion
-  const ideas = [occ ? `Show me looks for the ${occ.toLowerCase()}` : null, 'Something for a wedding', 'Office, but relaxed', 'A date night look under ₹5,000'].filter(Boolean) as string[]
+  const ideas = [occ ? `Looks for the ${occ.toLowerCase()}` : 'Outfit for a beach party', 'Something for a wedding', 'Show me some linen shirts'].filter(Boolean) as string[]
   return (
-    <div className="pt-6 fade-in">
-      <p className="label text-muted">Ava</p>
-      <p className="font-serif text-[34px] leading-[1.05] mt-2">Tell me where you’re going. I’ll dress you for it.</p>
-      <div className="mt-6 flex flex-wrap gap-2">
+    <div className="min-h-full flex flex-col items-center justify-center text-center py-10 fade-in" data-testid="chat-empty">
+      <p className="text-[22px] font-semibold tracking-[0.18em] uppercase">{e.store?.name ?? 'Stylist'}</p>
+      <p className="mt-7 text-[16px] font-bold">Hi, I’m your stylist.</p>
+      <p className="mt-1.5 text-[14px] text-muted max-w-[420px]">Tell me what you’re shopping for and I’ll put a look together from this store.</p>
+      <p className="mt-6 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Try asking</p>
+      <div className="mt-3 flex flex-col items-center gap-2">
         {ideas.map((s) => (
-          <button key={s} onClick={() => onPick(s)} className="h-9 px-4 rounded-full border border-line text-[14px] hover:border-ink transition-colors">{s}</button>
+          <button key={s} onClick={() => onPick(s)} className="px-4 py-2.5 rounded-full bg-soft text-[14px] font-medium hover:bg-line transition-colors">{s}</button>
         ))}
       </div>
     </div>
@@ -76,54 +72,61 @@ function Empty({ onPick }: { onPick: (s: string) => void }) {
 function Status({ m }: { m: Msg }) {
   const [open, setOpen] = useState(false)
   const lines = m.statuses ?? []
-  if (!lines.length) return m.streaming && !m.text ? <p className="text-[14px] text-muted flex items-center gap-2"><Ring done={false} /> Reading your message</p> : null
+  if (!lines.length) return m.streaming && !m.text ? <p className="text-[14px] flex items-center gap-2.5"><Dot done={false} /><span className="text-shine">Reading your message…</span></p> : null
   if (!m.streaming && !open) {
     return (
-      <button onClick={() => setOpen(true)} className="text-[13px] text-muted inline-flex items-center gap-1.5 hover:text-ink" data-testid="status-done">
-        <Check size={14} strokeWidth={2.5} className="text-ok" /> <span className="num">Done in {(m.doneIn ?? 0).toFixed(1)}s</span>
-        <ChevronDown size={13} />
+      <button onClick={() => setOpen(true)} className="text-[12px] text-muted inline-flex items-center gap-1.5 hover:text-ink" data-testid="status-done">
+        <Check size={13} strokeWidth={2.5} className="text-ok" /> <span className="num">Done in {(m.doneIn ?? 0).toFixed(1)}s</span>
+        <ChevronDown size={12} />
       </button>
     )
   }
   return (
-    <ul className="space-y-2" data-testid="status-list">
+    <ul className="space-y-2.5" data-testid="status-list">
       {lines.map((s) => (
-        <li key={s.id} className={`flex items-center gap-2.5 text-[14px] num ${s.state === 'done' ? 'text-ink' : 'text-muted'}`}>
-          <Ring done={s.state === 'done'} /> {s.label}
+        <li key={s.id} className="flex items-center gap-2.5 text-[14px] num">
+          <Dot done={s.state === 'done'} />
+          <span className={s.state === 'done' ? 'text-muted' : 'text-shine'}>{s.label}{s.state === 'done' ? '' : '…'}</span>
         </li>
       ))}
     </ul>
   )
 }
 
-function AgentMsg({ m, last, onChip, onElse }: { m: Msg; last: boolean; onChip: (s: string) => void; onElse: () => void }) {
+/** Status dot: a filled check when done, a soft empty circle while working. */
+const Dot = ({ done }: { done: boolean }) => (done
+  ? <span className="w-[18px] h-[18px] rounded-full bg-ink text-white inline-flex items-center justify-center shrink-0"><Check size={11} strokeWidth={3} /></span>
+  : <span className="w-[18px] h-[18px] rounded-full bg-soft shrink-0" aria-hidden />)
+
+function AgentMsg({ m, last, onPick }: { m: Msg; last: boolean; onPick: (s: string) => void }) {
   const e = useElara()
-  const showChips = m.clarify && last && !e.busy
   return (
     <div className="fade-in" data-testid="agent-msg">
-      <p className="label text-muted mb-2">Ava</p>
       <div className="space-y-3">
         <Status m={m} />
-        {m.text && <p className="text-[16px] leading-[26px] whitespace-pre-wrap" data-testid="agent-text">{m.text}</p>}
-        {m.clarify?.question && !m.text.includes(m.clarify.question) && <p className="text-[16px] leading-[26px]">{m.clarify.question}</p>}
-        {showChips && (
-          <div className="flex flex-wrap gap-2 pt-1" data-testid="clarify-chips">
-            {m.clarify!.chips.map((c) => (
-              <button key={c} onClick={() => onChip(c)} className="h-9 px-4 rounded-full border border-ink text-[14px] hover:bg-ink hover:text-white transition-colors">{c}</button>
-            ))}
-            <button onClick={onElse} className="h-9 px-4 rounded-full border border-line text-[14px] text-muted hover:border-ink hover:text-ink transition-colors">Something else…</button>
-          </div>
-        )}
+        {m.text && <p className="text-[14px] leading-[22px] whitespace-pre-wrap max-w-[640px]" data-testid="agent-text">{m.text}</p>}
+        {!m.text && !!m.clarify?.questions?.length && !(last && !e.busy) && <p className="text-[14px] leading-[22px]">{m.clarify.questions[0].question}</p>}
         {m.error && (
-          <div className="rounded-[14px] bg-surface px-4 py-3 flex items-center gap-3 text-[14px]" role="alert" data-testid="chat-error">
+          <div className="rounded-2xl bg-surface px-4 py-3 flex items-center gap-3 text-[14px]" role="alert" data-testid="chat-error">
             <span className="flex-1">{m.error}</span>
-            {m.retry && last && <button className="h-8 px-4 rounded-full bg-ink text-white text-[13px] font-medium" onClick={() => e.send(m.retry!.message, { lookId: m.retry!.lookId })}>Try again</button>}
+            {m.retry && last && <button className="h-8 px-4 rounded-full bg-ink text-white text-[12px] font-semibold" onClick={() => e.send(m.retry!.message, { lookId: m.retry!.lookId, answers: m.retry!.answers })}>Try again</button>}
           </div>
         )}
       </div>
+      {!!m.products?.length && <ProductGrid cards={m.products} />}
       {!!m.lookIds?.length && (
-        <div className="mt-5 space-y-5">
+        <div className="mt-3 space-y-3 max-w-[640px]">
           {m.lookIds.map((id, i) => e.looks[id] && <LookCard key={id} look={e.looks[id]} n={i + 1} />)}
+        </div>
+      )}
+      {last && !e.busy && !!m.tryNext?.length && (
+        <div className="mt-5" data-testid="try-next">
+          <p className="text-[13px] text-muted mb-2">Try next</p>
+          <div className="flex flex-col items-start gap-2">
+            {m.tryNext.map((t) => (
+              <button key={t} onClick={() => onPick(t)} data-testid="try-next-chip" className="px-4 py-2.5 rounded-full border border-line text-[14px] text-left hover:border-ink transition-colors">{t}</button>
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -133,13 +136,14 @@ function AgentMsg({ m, last, onChip, onElse }: { m: Msg; last: boolean; onChip: 
 export function AddLookButton({ look, verdict, className = '' }: { look: Look; verdict?: string; className?: string }) {
   const e = useElara()
   const [added, setAdded] = useState(false)
+  if (look.items.length && look.items.every((i) => i.product.owned)) return null // all yours: nothing to buy
   return (
     <button
       data-testid="add-look"
       onClick={() => { e.addLookToCart(look, verdict); setAdded(true); setTimeout(() => setAdded(false), 2000) }}
-      className={`h-11 px-5 rounded-full text-[14px] font-medium inline-flex items-center justify-center gap-2 transition-all duration-[240ms] ${added ? 'bg-ok text-white' : 'bg-ink text-white hover:opacity-90'} ${className}`}
+      className={`h-9 px-4 rounded-full text-[12px] font-semibold inline-flex items-center justify-center gap-1.5 transition-colors ${added ? 'bg-ok text-white' : 'bg-ink text-white hover:opacity-90'} ${className}`}
     >
-      {added ? <><Check size={16} strokeWidth={2.5} /> Added</> : 'Add look to bag'}
+      {added ? <><Check size={14} strokeWidth={2.5} /> Added</> : <><ShoppingCart size={14} strokeWidth={2} /> Add to cart</>}
     </button>
   )
 }
@@ -147,18 +151,19 @@ export function AddLookButton({ look, verdict, className = '' }: { look: Look; v
 function IconBtn({ label, onClick, children, testid, active }: { label: string; onClick: () => void; children: React.ReactNode; testid?: string; active?: boolean }) {
   return (
     <button aria-label={label} title={label} data-testid={testid} onClick={onClick}
-      className={`w-11 h-11 rounded-full border inline-flex items-center justify-center transition-colors ${active ? 'bg-ink text-white border-ink' : 'border-line hover:border-ink'}`}>
+      className={`w-9 h-9 rounded-full border inline-flex items-center justify-center transition-colors ${active ? 'bg-ink text-white border-ink' : 'border-line text-muted hover:text-ink hover:border-ink'}`}>
       {children}
     </button>
   )
 }
 
-export function RenderBox({ look, onOpen, video }: { look: Look; onOpen?: () => void; video?: boolean }) {
+/** The try-on image area: the render, live progress while it renders, or the flat pieces with the next step. */
+export function RenderBox({ look, onOpen, video, compact }: { look: Look; onOpen?: () => void; video?: boolean; compact?: boolean }) {
   const e = useElara()
   const r = look.render
   const products = look.items.map((i) => i.product)
   return (
-    <div className="relative aspect-[3/4] bg-surface overflow-hidden" data-testid="render-box" data-render-status={r.status}>
+    <div className="relative aspect-[3/4] bg-surface overflow-hidden" data-testid="render-box">
       {r.status === 'ready' && r.image_url ? (
         <>
           <button className="absolute inset-0" onClick={onOpen} aria-label={`Open ${look.name} in the viewer`}>
@@ -167,90 +172,115 @@ export function RenderBox({ look, onOpen, video }: { look: Look; onOpen?: () => 
           {video && look.video.url && (
             <video src={abs(look.video.url)} autoPlay muted loop playsInline className="absolute inset-0 w-full h-full object-cover" aria-label={`${look.name}, moving`} />
           )}
-          <span className="label absolute top-3 left-3 !text-[10px] bg-white px-2 py-1 pointer-events-none">On you</span>
+          <span className="absolute top-2.5 left-2.5 text-[10px] font-semibold uppercase tracking-[0.08em] bg-white rounded-full px-2.5 py-1 pointer-events-none">{look.model_id || e.session?.sample_model_id ? 'On the model' : 'On you'}</span>
           {r.cached && <span className="sr-only">Cached render</span>}
         </>
-      ) : r.status === 'failed' ? (
+      ) : r.status === 'idle' || r.status === 'failed' ? (
         <>
           <Collage products={products} />
-          <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black/60 to-transparent flex items-end justify-between gap-3" data-testid="render-failed">
-            <p className="text-[12px] text-white leading-4">{r.error || 'We couldn’t render this one.'}</p>
-            <button onClick={() => e.retryRender(look.id)} data-testid="retry-render" className="shrink-0 h-9 px-4 rounded-full bg-white text-ink text-[13px] font-medium">Retry try-on</button>
+          <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black/60 to-transparent flex items-end justify-between gap-3" data-testid={r.status === 'failed' ? 'render-failed' : undefined}>
+            <p className="text-[12px] text-white leading-4">{r.status === 'idle' ? '' : r.error || 'We couldn’t render this one.'}</p>
+            {r.code !== 'minor' && (
+              <button onClick={() => e.renderLook(look.id)} data-testid={r.status === 'idle' ? 'try-on' : 'retry-render'} className="shrink-0 h-8 px-3.5 rounded-full bg-white text-ink text-[12px] font-semibold inline-flex items-center gap-1.5">
+                <ScanFace size={14} strokeWidth={1.75} />{r.status === 'idle' || r.code ? 'Try on' : 'Retry'}
+              </button>
+            )}
           </div>
         </>
       ) : (
-        <Silhouette label="Rendering on you… ~15 s" sub={r.steps_total > 1 ? `Layer ${Math.min(r.steps_done + 1, r.steps_total)} of ${r.steps_total}` : undefined} />
+        <RenderProgress look={look} compact={compact} onModel={!!e.session?.sample_model_id} />
       )}
       {look.video.status === 'pending' && (
-        <span className="absolute top-3 right-3 h-7 px-3 rounded-full bg-white text-[12px] inline-flex items-center gap-2"><Ring done={false} /> Making it move · a few minutes</span>
+        <span className="absolute top-2.5 right-2.5 h-7 px-3 rounded-full bg-white text-[11px] inline-flex items-center gap-2"><Ring done={false} /> Making it move</span>
       )}
     </div>
   )
 }
 
+/** Outfit card: numbered header, "Why this works", the pieces as thumbnails, the try-on once asked for, and a
+ *  total with Try on / Add to cart. Tap a piece to see just that piece on you; ↻ swaps it; ↗ opens its page. */
 export function LookCard({ look, n }: { look: Look; n: number }) {
   const e = useElara()
   const [why, setWhy] = useState(false)
   const [video, setVideo] = useState(false)
   const focused = e.focusLookId === look.id
-  const products = look.items
+  const r = look.render
+  const shown = r.status !== 'idle' && !(r.status === 'failed' && (r.code === 'gender_mismatch' || r.code === 'no_photo'))
   const onVideo = () => {
     if (look.video.status === 'ready') setVideo((v) => !v)
     else if (look.video.status !== 'pending') { e.requestVideo(look.id); setVideo(true) }
   }
   return (
-    <article
-      data-testid="look-card"
-      data-look-id={look.id}
-      className={`rounded-[14px] border overflow-hidden bg-white transition-colors ${focused ? 'border-ink' : 'border-line'}`}
-      onClickCapture={() => e.setFocusLookId(look.id)}
-    >
-      <header className="px-4 py-3 flex items-center justify-between gap-3">
-        <h4 className="font-serif text-[24px] leading-tight truncate"><span className="num text-muted">{n}</span> · <span data-testid="look-name">{look.name}</span></h4>
+    <article data-testid="look-card" data-look-id={look.id} className={`card-glow rounded-2xl border bg-white overflow-hidden transition-colors ${focused ? 'border-ink' : 'border-line'}`}>
+      <header className="flex items-center gap-2.5 px-4 pt-3.5">
+        <span className="num w-6 h-6 shrink-0 rounded-full bg-ink text-white text-[12px] font-semibold inline-flex items-center justify-center">{n}</span>
+        <h4 className="flex-1 min-w-0 text-[14px] font-semibold capitalize truncate" data-testid="look-name">{look.name}</h4>
         <ScoreBadge score={look.score} band={look.score_band} />
-      </header>
-      <RenderBox look={look} onOpen={() => e.setViewer(look.id)} video={video && look.video.status === 'ready'} />
-      <ul className="px-4 divide-y divide-line">
-        {products.map(({ slot, product: p }) => (
-          <li key={slot + p.id} className="py-3 flex items-center gap-3" data-testid="piece-row">
-            <img src={abs(p.image_url)} alt="" className="w-12 h-16 object-cover object-top bg-surface shrink-0" />
-            <div className="flex-1 min-w-0">
-              <p className="text-[14px] leading-5 truncate">{pieceName(p)}</p>
-              <p className="text-[12px] text-muted truncate">{p.title.split(' - ')[1] ?? catName(p.category)}</p>
-            </div>
-            <span className="num text-[14px]">{inr(p.price)}</span>
-            {['top', 'bottom', 'one_piece', 'layer'].includes(slot) && (
-              <button aria-label={`Swap the ${catName(p.category)}`} title="Swap this piece" data-testid={`swap-${slot}`} onClick={() => e.setSwap({ lookId: look.id, slot })}
-                className="w-9 h-9 -mr-2 rounded-full inline-flex items-center justify-center hover:bg-surface"><RefreshCw size={16} strokeWidth={1.5} /></button>
-            )}
-          </li>
-        ))}
-      </ul>
-      <div className="px-4 py-3 border-t border-line flex items-baseline justify-between">
-        <span className="text-[14px] text-muted">Total</span>
-        <span className="text-right">
-          <span className="num text-[16px] font-medium" data-testid="look-total">{inr(look.total)}</span>
-          {!!look.over_budget_by && <span className="num block text-[12px] text-accent">{inr(look.over_budget_by)} over budget</span>}
-        </span>
-      </div>
-      <div className="border-t border-line">
-        <button className="w-full h-11 px-4 flex items-center justify-between text-[14px]" aria-expanded={why} onClick={() => setWhy(!why)}>
-          Why this works <ChevronDown size={15} strokeWidth={1.5} className={`transition-transform ${why ? 'rotate-180' : ''}`} />
+        <button aria-pressed={focused} aria-label={focused ? `Stop editing ${look.name}` : `Edit ${look.name} in the chat`} title={focused ? 'Selected for edits' : 'Select to change it in the chat'}
+          onClick={() => e.setFocusLookId(focused ? null : look.id)} data-testid="look-select"
+          className={`w-[22px] h-[22px] shrink-0 rounded-full border inline-flex items-center justify-center transition-colors ${focused ? 'bg-ink border-ink text-white' : 'border-line hover:border-ink'}`}>
+          {focused && <Check size={12} strokeWidth={3} />}
         </button>
-        {why && (
-          <div className="px-4 pb-4 text-[14px] leading-[22px] text-muted fade-in space-y-2">
-            <p>{look.why}</p>
-            {look.score_reason && <p className="text-ink/80">{look.score_reason}.</p>}
+      </header>
+
+      <button className="mx-4 mt-3 w-[calc(100%-2rem)] flex items-center justify-between rounded-full bg-soft px-3.5 py-2 text-left text-[12px] font-semibold uppercase tracking-[0.3px]" aria-expanded={why} onClick={() => setWhy(!why)}>
+        Why this works <ChevronDown size={15} strokeWidth={2} className={`transition-transform ${why ? 'rotate-180' : ''}`} />
+      </button>
+      {why && (
+        <div className="mx-4 mt-2 rounded-xl bg-surface px-4 py-3 text-[13px] leading-[20px] space-y-2 fade-in" data-testid="why-body">
+          <p>{look.why}</p>
+          {look.tip && <p><span className="font-semibold">Finish it:</span> <span className="text-muted">{look.tip}</span></p>}
+          {look.score_reason && <p className="text-muted">{look.score_reason}.</p>}
+        </div>
+      )}
+
+      <div className="px-4 mt-3 flex flex-wrap gap-3" data-render-status={r.status}>
+        {shown && (
+          <div className="w-[220px] max-w-full rounded-xl overflow-hidden fade-in">
+            <RenderBox look={look} onOpen={() => e.setViewer(look.id)} video={video && look.video.status === 'ready'} compact />
           </div>
         )}
+        <div className={`flex flex-wrap gap-3 content-start ${shown ? 'flex-1 min-w-[236px]' : ''}`}>
+          {look.items.map(({ slot, product: p }) => (
+            <div key={slot + p.id} className="w-28 flex flex-col gap-1.5" data-testid="piece-row">
+              <div className="relative aspect-square rounded-lg overflow-hidden bg-surface group">
+                <button className="absolute inset-0 disabled:cursor-default" disabled={!WEARABLE.has(slot) || !!p.owned} data-testid={`piece-tryon-${slot}`}
+                  onClick={() => e.setTryon({ kind: 'items', products: [p], fromLookId: look.id })}
+                  aria-label={WEARABLE.has(slot) ? `See the ${pieceName(p)} on you` : pieceName(p)} title={WEARABLE.has(slot) ? 'See just this on you' : undefined}>
+                  <img src={abs(p.image_url)} alt="" className={`w-full h-full group-hover:scale-[1.03] transition-transform duration-300 ${p.owned ? 'object-contain p-1.5' : 'object-cover object-top'}`} />
+                </button>
+                <button aria-label={`Swap the ${catName(p.category)}`} title="Swap this piece" data-testid={`swap-${slot}`} onClick={() => e.setSwap({ lookId: look.id, slot })}
+                  className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-white/95 shadow-sm inline-flex items-center justify-center"><RefreshCw size={11} strokeWidth={2} /></button>
+                {p.owned ? <span className="absolute bottom-1.5 left-1.5 h-5 px-2 rounded-full bg-ink text-white text-[9px] font-semibold uppercase tracking-[0.06em] inline-flex items-center" data-testid="piece-owned">Yours</span>
+                  : <a href={p.product_url} target="_top" aria-label={`Open ${pieceName(p)}`} title="Open the product page"
+                    className="absolute bottom-1.5 right-1.5 w-6 h-6 rounded-full bg-white/95 shadow-sm inline-flex items-center justify-center"><ArrowUpRight size={12} strokeWidth={2} /></a>}
+              </div>
+              <p className="text-[11px] font-medium leading-snug line-clamp-2">{p.title}</p>
+              <p className="num text-[11px] text-muted">{p.owned ? 'In your wardrobe' : inr(p.price)}</p>
+            </div>
+          ))}
+        </div>
       </div>
-      <footer className="px-4 py-3 border-t border-line flex items-center gap-2">
-        <AddLookButton look={look} className="flex-1" />
-        <IconBtn label={look.video.status === 'ready' ? (video ? 'Show the photo' : 'Play the video') : 'See it move'} testid="see-it-move" onClick={onVideo} active={video && look.video.status === 'ready'}>
-          {look.video.status === 'ready' && !video ? <Play size={16} strokeWidth={1.5} /> : <Film size={16} strokeWidth={1.5} />}
-        </IconBtn>
-        <IconBtn label="Share with Crew" testid="share-crew" onClick={() => e.shareLook(look.id)}><Users size={16} strokeWidth={1.5} /></IconBtn>
-        <IconBtn label="Open viewer" testid="open-viewer" onClick={() => e.setViewer(look.id)}><Maximize2 size={16} strokeWidth={1.5} /></IconBtn>
+
+      <footer className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-line px-4 py-3.5">
+        <p className="text-[14px]">
+          Total: <span className="num font-semibold" data-testid="look-total">{inr(look.total)}</span>
+          {!!look.over_budget_by && <span className="num block text-[11px] text-accent">{inr(look.over_budget_by)} over budget</span>}
+          {look.items.some((i) => i.product.owned) && <span className="block text-[11px] text-muted">+ {look.items.filter((i) => i.product.owned).length} from your wardrobe</span>}
+        </p>
+        <div className="flex items-center gap-1.5">
+          {r.status === 'ready' && (
+            <IconBtn label={look.video.status === 'ready' ? (video ? 'Show the photo' : 'Play the video') : 'See it move'} testid="see-it-move" onClick={onVideo} active={video && look.video.status === 'ready'}>
+              {look.video.status === 'ready' && !video ? <Play size={14} strokeWidth={1.75} /> : <Film size={14} strokeWidth={1.75} />}
+            </IconBtn>
+          )}
+          <IconBtn label="Share with Crew" testid="share-crew" onClick={() => e.shareLook(look.id)}><Users size={14} strokeWidth={1.75} /></IconBtn>
+          <IconBtn label="Open viewer" testid="open-viewer" onClick={() => e.setViewer(look.id)}><Maximize2 size={14} strokeWidth={1.75} /></IconBtn>
+          {(r.status === 'idle' || (r.status === 'failed' && r.code !== 'minor')) && (
+            <button data-testid="look-try-on" onClick={() => e.renderLook(look.id)} className="h-9 px-3.5 rounded-full border border-line text-[12px] font-semibold inline-flex items-center gap-1.5 hover:bg-surface"><ScanFace size={14} strokeWidth={1.75} /> Try on</button>
+          )}
+          <AddLookButton look={look} />
+        </div>
       </footer>
     </article>
   )
@@ -259,13 +289,6 @@ export function LookCard({ look, n }: { look: Look; n: number }) {
 function Composer({ inputRef, onSend, focusLook }: { inputRef: React.RefObject<HTMLTextAreaElement>; onSend: (s: string) => void; focusLook: Look | null }) {
   const e = useElara()
   const [v, setV] = useState('')
-  const [ph, setPh] = useState(0)
-  const [focused, setFocused] = useState(false)
-  useEffect(() => {
-    if (focused || v) return
-    const iv = setInterval(() => setPh((p) => (p + 1) % PROMPTS.length), 3200)
-    return () => clearInterval(iv)
-  }, [focused, v])
   useEffect(() => {
     const el = inputRef.current
     if (!el) return
@@ -278,7 +301,7 @@ function Composer({ inputRef, onSend, focusLook }: { inputRef: React.RefObject<H
     setV('')
   }
   return (
-    <div className="shrink-0 px-4 sm:px-6 pt-2 pb-3 bg-white">
+    <div className="shrink-0 px-4 sm:px-5 pt-2 pb-2 bg-white">
       {focusLook && (
         <div className="mb-2 flex items-center gap-2 text-[12px]" data-testid="focus-chip">
           <span className="text-muted">Editing</span>
@@ -288,30 +311,135 @@ function Composer({ inputRef, onSend, focusLook }: { inputRef: React.RefObject<H
           </span>
         </div>
       )}
-      <div className="min-h-14 rounded-[28px] border border-line focus-within:border-ink transition-colors flex items-end gap-2 pl-5 pr-2 py-2">
+      <div className="gradient-border rounded-[24px] shadow-sm flex items-end gap-1.5 pl-4 pr-1.5 py-1">
         <textarea
           ref={inputRef}
           rows={1}
           value={v}
           data-testid="composer-input"
-          aria-label="Message Ava"
-          placeholder={focusLook ? `Change something about ${focusLook.name}` : PROMPTS[ph]}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
+          aria-label="Message your stylist"
+          placeholder={focusLook ? `Change something about ${focusLook.name}` : 'What are you looking for?'}
           onChange={(ev) => setV(ev.target.value)}
           onKeyDown={(ev) => { if (ev.key === 'Enter' && !ev.shiftKey && !ev.nativeEvent.isComposing) { ev.preventDefault(); go() } }}
-          className="flex-1 resize-none bg-transparent outline-none text-[16px] leading-6 py-2 max-h-[120px] placeholder:text-muted/80"
+          className="flex-1 resize-none bg-transparent outline-none text-[14px] leading-6 py-2 max-h-[120px] placeholder:text-muted"
         />
         <button
-          aria-label="Send"
+          aria-label="Send message"
           data-testid="composer-send"
           disabled={!v.trim() || e.busy}
           onClick={go}
-          className="w-10 h-10 rounded-full bg-ink text-white inline-flex items-center justify-center shrink-0 disabled:bg-line disabled:text-muted transition-colors"
+          className={`w-9 h-9 mb-0.5 rounded-full inline-flex items-center justify-center shrink-0 transition-colors ${v.trim() && !e.busy ? 'bg-ink text-white' : 'bg-surface text-muted'}`}
         >
-          {e.busy ? <span className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white spin" /> : <ArrowUp size={18} strokeWidth={2} />}
+          {e.busy ? <span className="w-4 h-4 rounded-full border-2 border-line border-t-ink spin" /> : <SendHorizontal size={16} strokeWidth={1.75} />}
         </button>
       </div>
+    </div>
+  )
+}
+
+/** 1-2 questions on one card, docked above the composer. Answers go to the server structured (they fill the
+ *  shopper's profile) and as one readable line in the chat. */
+function ClarifyCard({ card, onDone }: { card: Clarify; onDone: (text: string, answers: Answer[]) => void }) {
+  const n = card.questions.length
+  const [i, setI] = useState(0)
+  const [picks, setPicks] = useState<({ label: string; value: string } | null)[]>(() => card.questions.map(() => null))
+  const [other, setOther] = useState(false)
+  const [txt, setTxt] = useState('')
+  const q = card.questions[i]
+  const finish = (ps: typeof picks) => {
+    const answers = ps.flatMap((p, k) => (p ? [{ field: card.questions[k].field, value: p.value }] : []))
+    const labels = ps.flatMap((p) => (p ? [p.label] : []))
+    onDone(labels.length ? labels.join(' · ') : 'Skip the questions, just show me something', answers)
+  }
+  const choose = (p: { label: string; value: string } | null) => {
+    const next = picks.map((x, k) => (k === i ? p : x))
+    setPicks(next); setOther(false); setTxt('')
+    if (i < n - 1) setI(i + 1)
+    else finish(next)
+  }
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent) => {
+      const k = Number(ev.key)
+      if (!other && k >= 1 && k <= q.options.length && !(ev.target as HTMLElement)?.closest?.('textarea,input')) choose(q.options[k - 1])
+    }
+    addEventListener('keydown', onKey)
+    return () => removeEventListener('keydown', onKey)
+  })
+  return (
+    <div className="shrink-0 px-4 sm:px-5 pb-1 pop-in">
+      <div className="rounded-2xl border border-line bg-white shadow-[0_8px_30px_rgba(0,0,0,.08)] overflow-hidden" data-testid="clarify-card" role="group" aria-label={q.question}>
+        <div className="px-4 py-3.5 flex items-center gap-3 border-b border-line">
+          <p className="flex-1 text-[15px] font-semibold leading-5" data-testid="clarify-question">{q.question}</p>
+          {n > 1 && (
+            <span className="num text-[13px] text-muted inline-flex items-center gap-1 shrink-0">
+              <button aria-label="Previous question" disabled={i === 0} onClick={() => setI(i - 1)} className="disabled:opacity-30"><ChevronLeft size={15} /></button>
+              {i + 1} of {n}
+              <button aria-label="Next question" disabled={i === n - 1} onClick={() => setI(i + 1)} className="disabled:opacity-30"><ChevronRight size={15} /></button>
+            </span>
+          )}
+        </div>
+        <div className="p-1.5">
+          {q.options.map((o, k) => (
+            <button key={o.value + k} data-testid="clarify-option" onClick={() => choose(o)}
+              className={`w-full h-12 px-2.5 rounded-xl flex items-center gap-3 text-[15px] text-left transition-colors hover:bg-surface ${picks[i]?.value === o.value ? 'bg-surface' : ''}`}>
+              <span className="num w-7 h-7 rounded-full bg-surface text-[12px] text-muted inline-flex items-center justify-center shrink-0">{k + 1}</span>
+              {o.label}
+            </button>
+          ))}
+          <div className="h-12 px-2.5 flex items-center gap-3">
+            <span className="w-7 h-7 rounded-full bg-surface text-muted inline-flex items-center justify-center shrink-0"><Pencil size={12} strokeWidth={1.75} /></span>
+            {other ? (
+              <input autoFocus value={txt} onChange={(ev) => setTxt(ev.target.value)} placeholder="Type your answer" data-testid="clarify-else-input" maxLength={80}
+                onKeyDown={(ev) => { if (ev.key === 'Enter' && txt.trim()) choose({ label: txt.trim(), value: txt.trim() }); if (ev.key === 'Escape') setOther(false) }}
+                className="flex-1 bg-transparent outline-none text-[15px] placeholder:text-muted" />
+            ) : (
+              <button data-testid="clarify-else" onClick={() => setOther(true)} className="flex-1 text-left text-[15px] text-muted hover:text-ink">Something else</button>
+            )}
+            <button data-testid="clarify-skip" onClick={() => choose(null)} className="h-8 px-3.5 rounded-full border border-line text-[13px] text-muted hover:border-ink hover:text-ink">Skip</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ProductGrid({ cards }: { cards: ProductCard[] }) {
+  const e = useElara()
+  const [added, setAdded] = useState<string | null>(null)
+  const add = (p: Product) => {
+    e.addToCart([{ product_id: p.id, title: p.title, price: p.price, image_url: p.image_url, size: p.sizes_in_stock.includes('M') ? 'M' : p.sizes_in_stock[0], styled_with: 'Ava' }])
+    setAdded(p.id); setTimeout(() => setAdded(null), 1800)
+  }
+  return (
+    <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-5 max-w-[640px]" data-testid="product-grid">
+      {cards.map(({ product: p, match }) => (
+        <article key={p.id} data-testid="grid-card">
+          <div className="relative aspect-[3/4] bg-surface overflow-hidden rounded-xl">
+            <img src={abs(p.image_url)} alt={p.title} className="w-full h-full object-cover object-top" loading="lazy" />
+            {match != null && match >= 70 && <span className="absolute top-2.5 left-2.5 text-[10px] font-semibold uppercase tracking-[0.06em] bg-white rounded-full px-2.5 py-1" title="How closely it matches your Style DNA">{match}% your style</span>}
+            {WEARABLE.has(p.slot) && (
+              <button aria-label={`See the ${pieceName(p)} on you`} title="Try it on" data-testid="product-tryon" onClick={() => e.setTryon({ kind: 'items', products: [p] })}
+                className="absolute bottom-2.5 left-2.5 w-8 h-8 rounded-full bg-white shadow-sm inline-flex items-center justify-center"><ScanFace size={15} strokeWidth={1.75} /></button>
+            )}
+            <a href={p.product_url} target="_top" aria-label={`Open ${pieceName(p)}`} title="Open the product page"
+              className="absolute bottom-2.5 right-2.5 w-8 h-8 rounded-full bg-white shadow-sm inline-flex items-center justify-center"><ArrowUpRight size={14} strokeWidth={2} /></a>
+          </div>
+          <div className="mt-2 flex items-start gap-2">
+            <div className="flex-1 min-w-0">
+              <p className="text-[13px] font-medium leading-[18px] line-clamp-2">{p.title}</p>
+              <p className="num text-[13px] text-muted mt-0.5">{inr(p.price)}</p>
+            </div>
+            <button aria-label={`Add ${pieceName(p)} to cart`} title="Add to cart" data-testid="product-add" onClick={() => add(p)}
+              className={`w-8 h-8 shrink-0 rounded-full border inline-flex items-center justify-center transition-colors ${added === p.id ? 'bg-ok border-ok text-white' : 'border-line hover:border-ink'}`}>
+              {added === p.id ? <Check size={14} strokeWidth={2.5} /> : <ShoppingBag size={14} strokeWidth={1.75} />}
+            </button>
+          </div>
+          {WEARABLE.has(p.slot) && (
+            <button data-testid="product-style" disabled={e.busy} onClick={() => e.send(`Build a complete look around the ${p.title}`)}
+              className="mt-1.5 text-[12px] text-muted underline underline-offset-4 hover:text-ink disabled:opacity-50">Build a look with this</button>
+          )}
+        </article>
+      ))}
     </div>
   )
 }

@@ -18,10 +18,12 @@ def app_client(c, monkeypatch):
     return c
 
 
-def new_session(brief=None, photo=False) -> str:
+def new_session(brief=None, photo=False, confirmed=True) -> str:
     s, _, _ = sessions.create()
     if brief:
         db.ex("update sessions set brief=? where id=?", brief, s["id"])
+        if confirmed:  # as if the shopper answered these on the card in this chat
+            sessions.confirm(s["id"], sessions.BASICS)
     if photo:
         db.ex("update sessions set photo_url=?, src_url=? where id=?", "/media/models/w1.jpg", "model:w1", s["id"])
     return s["id"]
@@ -105,12 +107,11 @@ def test_validator(app_client):  # U-AG-2
     assert any("at most" in e for e in check(*[([r["top"], r["bottom"]], False)] * 4))
 
 
-def test_sse_closes_after_renders_settle(app_client, monkeypatch):  # U-AG-3
+def test_looks_arrive_flat_and_render_on_tap(app_client, monkeypatch):  # U-AG-3
     calls = []
 
     async def fake_run(steps, src, session_id=None, on_step=None):
         for i, _ in enumerate(steps):
-            await asyncio.sleep(0.05)
             calls.append(i)
             if on_step:
                 on_step(i + 1, None)
@@ -120,16 +121,16 @@ def test_sse_closes_after_renders_settle(app_client, monkeypatch):  # U-AG-3
     sid = new_session(BEACH, photo=True)
     evs = events(app_client.post("/api/chat", json={"session_id": sid, "message": "beach looks please"}))
     kinds = [e for e, _ in evs]
-    assert kinds[-1] == "done" and kinds.count("done") == 1
-    ids = [lk["id"] for lk in next(d for e, d in evs if e == "looks")["looks"]]
-    final = {}
-    for e, d in evs:
-        if e == "look":
-            final[d["look"]["id"]] = d["look"]["render"]["status"]
-    assert set(final) == set(ids) and set(final.values()) == {"ready"}
-    assert kinds.index("looks") < kinds.index("look")
-    assert any(e == "status" and d["id"] == "render" and d["state"] == "done" for e, d in evs)
-    assert calls
+    assert kinds[-1] == "done" and kinds.count("done") == 1 and "look" not in kinds
+    lks = next(d for e, d in evs if e == "looks")["looks"]
+    assert {lk["render"]["status"] for lk in lks} == {"idle"} and not calls  # nothing spent until a tap
+    lid = lks[0]["id"]
+    assert app_client.post(f"/api/looks/{lid}/render", json={}).status_code == 200
+    for _ in range(50):
+        if app_client.get(f"/api/looks/{lid}").json()["render"]["status"] == "ready":
+            break
+        asyncio.run(asyncio.sleep(0.02))
+    assert app_client.get(f"/api/looks/{lid}").json()["render"]["status"] == "ready" and calls
 
 
 def test_unknown_session_gets_error_and_done(app_client):
@@ -253,3 +254,53 @@ def test_claude_failure_falls_back(app_client, monkeypatch):
     kinds = [e for e, _ in evs]
     assert "looks" in kinds and kinds[-1] == "done"
     assert any(e == "status" and d["id"] == "understand" and d["state"] == "done" for e, d in evs)
+
+
+def test_new_request_must_ask_first(app_client, monkeypatch):
+    """A new request presented without the question card is sent back; Claude then asks; the answer unlocks it."""
+    def search(kw):
+        return _msg(_use(1, "search_catalog", **{**_search("top"), "for_whom": "shopper"}))
+
+    def grid(kw, i):
+        refs = [x["ref"] for x in state.setdefault("res", _results(kw))["tu_1"]["results"]][:4]
+        return _msg(_use(i, "present_products", message="Office shirts.", product_refs=refs, request="new",
+                         try_next=[], wearer={"for": "self", "relation": "", "gender": "women", "occasion": ""}))
+
+    def ask(kw):
+        gate = kw["messages"][-1]["content"][0]
+        assert gate["is_error"] and "ask first" in gate["content"]
+        return _msg(_use(3, "ask_clarification", questions=[
+            {"field": "budget", "question": "Budget per shirt?", "options": [
+                {"label": "Under ₹2,000", "value": "2000"}, {"label": "No limit", "value": "none"}]}]))
+
+    state = {}
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test")
+    monkeypatch.setattr(loop, "_client", FakeClaude([search, lambda kw: grid(kw, 2), ask]))
+    sid = new_session(BEACH)
+    evs = events(app_client.post("/api/chat", json={"session_id": sid, "message": "shirts for office"}))
+    kinds = [e for e, _ in evs]
+    assert "clarify" in kinds and "products" not in kinds and {"gate": "ask_first"} in loop.TRACES[sid]
+    # the answer to the card unlocks the grid, still marked "new"
+    state.clear()
+    monkeypatch.setattr(loop, "_client", FakeClaude([search, lambda kw: grid(kw, 2)]))
+    evs = events(app_client.post("/api/chat", json={"session_id": sid, "message": "No limit",
+                                                    "answers": [{"field": "budget", "value": "none"}]}))
+    assert "products" in [e for e, _ in evs]
+
+
+def test_a_rejected_request_drops_only_what_the_api_names(monkeypatch):
+    from app.agent import loop
+    monkeypatch.setattr(loop, "_dropped", set())
+    assert loop._drop_for("The compiled grammar is too large; reduce the number of strict tools.") == "strict"
+    assert "strict" in loop._params([])["tools"][0]  # nothing dropped yet: caching and strict stay on
+    loop._dropped.add("strict")
+    assert loop._drop_for("unknown beta") == "betas"
+    loop._dropped.add("betas")
+    assert loop._drop_for("anything") is None  # nothing left to drop: the turn falls back
+
+
+def test_remember_preference_checks_its_own_input():
+    from app.agent import tools
+    assert not tools.remember(None, {"kind": "love", "attribute": "color", "value": "red"})["ok"]
+    assert not tools.remember(None, {"kind": "never", "attribute": "color", "value": " "})["ok"]
+    assert not next(t for t in tools.TOOLS if t["name"] == "remember_preference").get("strict")

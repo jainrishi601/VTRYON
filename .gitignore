@@ -13,3 +13,4 @@ playwright-report/
 .pnpm-store/
 *.tsbuildinfo
 e2e/var/
+.playwright-mcp/

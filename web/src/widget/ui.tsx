@@ -74,6 +74,58 @@ export function Collage({ products }: { products: Product[] }) {
   )
 }
 
+/** Render order of the worn pieces (same plan as the server: one-piece or bottom → top, then layer). */
+const ORDER = ['one_piece', 'bottom', 'top', 'layer']
+const STEP_S = 14 // a cloth-v4 call takes ~11–15 s
+
+/** While a look renders: the real step (which piece is going on, k of n), a rotating line of what the try-on is
+ *  doing, and a progress bar paced on the real step count. Fills its (3:4, relative) parent. */
+export function RenderProgress({ look, compact, onModel: modelPhoto }: { look: Look; compact?: boolean; onModel?: boolean }) {
+  const worn = ORDER.map((sl) => look.items.find((i) => i.slot === sl)).filter(Boolean) as Look['items']
+  const order = worn.some((i) => i.slot === 'one_piece') ? worn.filter((i) => i.slot !== 'bottom' && i.slot !== 'top') : worn
+  const n = Math.max(1, look.render.steps_total || order.length)
+  const k = Math.min(look.render.steps_done, n - 1)
+  const piece = order[Math.min(k, order.length - 1)]?.product
+  const what = piece ? pieceName(piece) : 'your look'
+  const onModel = !!look.model_id || !!modelPhoto // a sample model, not the shopper's own photo
+  const lines = [
+    onModel ? 'Getting the model ready' : 'Reading your photo',
+    'Matching your pose and light',
+    `Fitting the ${what}`,
+    'Settling the drape and the fit',
+    onModel ? 'Keeping the model exactly as they are' : 'Keeping your face and shape as they are',
+    n > 1 && k < n - 1 ? 'Lining up the next piece' : 'Final touches',
+  ]
+  const [li, setLi] = useState(0)
+  const [t, setT] = useState(0)
+  const stepAt = useRef(performance.now())
+  useEffect(() => { stepAt.current = performance.now(); setLi(2) }, [k]) // a new piece: say which one
+  useEffect(() => {
+    const a = setInterval(() => setLi((x) => (x + 1) % lines.length), 2600)
+    const b = setInterval(() => setT((performance.now() - stepAt.current) / 1000), 250)
+    return () => { clearInterval(a); clearInterval(b) }
+  }, [lines.length])
+  const pct = Math.round(((k + Math.min(0.92, t / STEP_S)) / n) * 100)
+  return (
+    <div className="absolute inset-0 skeleton flex flex-col items-center justify-end" data-testid="render-pending" aria-live="polite">
+      <svg viewBox="0 0 120 160" className="absolute inset-0 m-auto h-[74%] text-[#e3e3e3]" aria-hidden>
+        <circle cx="60" cy="22" r="13" fill="currentColor" />
+        <path d="M38 44c6-6 38-6 44 0l8 46-10 2-4-28-2 36 8 56H66l-6-44-6 44H38l8-56-2-36-4 28-10-2z" fill="currentColor" />
+      </svg>
+      <div className={`relative w-full text-center ${compact ? 'px-3 pb-3' : 'px-6 pb-6'}`}>
+        <p className="num text-[11px] font-semibold uppercase tracking-[0.08em] text-muted" data-testid="render-step">
+          {n > 1 ? `Piece ${k + 1} of ${n} · ` : ''}{what}
+        </p>
+        <p key={li} className={`line-in mt-1.5 font-medium ${compact ? 'text-[13px]' : 'text-[15px]'}`}><span className="text-shine">{lines[li]}…</span></p>
+        <div className="mt-3 h-1 rounded-full bg-white/70 overflow-hidden" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
+          <div className="h-full bg-ink rounded-full transition-[width] duration-300 ease-out" style={{ width: `${pct}%` }} />
+        </div>
+        {!compact && <p className="num mt-2 text-[11px] text-muted">About {Math.max(5, Math.round((n - k) * STEP_S - t))} s left</p>}
+      </div>
+    </div>
+  )
+}
+
 /** Skeleton silhouette for a pending render — matches the 3:4 geometry exactly. */
 export function Silhouette({ label, sub }: { label: string; sub?: string }) {
   return (
@@ -120,6 +172,33 @@ export function Sheet({ title, onClose, children, height = '64%', testid }: { ti
   )
 }
 
+/** Centred dialog inside the panel (a bottom sheet on phones): icon + title + subtitle header, scrolling body. */
+export function Dialog({ icon, title, sub, onClose, children, testid }: { icon?: ReactNode; title: ReactNode; sub?: ReactNode; onClose: () => void; children: ReactNode; testid?: string }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const prev = (ref.current?.getRootNode() as ShadowRoot | Document)?.activeElement as HTMLElement | null
+    ref.current?.focus()
+    return () => prev?.focus?.()
+  }, [])
+  return (
+    <div className="absolute inset-0 z-40 flex items-end sm:items-center justify-center sm:p-4" onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }}>
+      <div className="absolute inset-0 bg-black/55 fade-in" onClick={onClose} />
+      <div ref={ref} tabIndex={-1} role="dialog" aria-modal="true" data-testid={testid}
+        className="relative w-full sm:max-w-[560px] max-h-[94%] bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col outline-none pop-in">
+        <div className="flex items-start gap-3.5 px-6 pt-6 pb-4">
+          {icon && <span className="mt-0.5 shrink-0 text-ink">{icon}</span>}
+          <div className="flex-1 min-w-0">
+            <h3 className="text-[19px] font-semibold leading-tight">{title}</h3>
+            {sub && <p className="mt-1.5 text-[14px] leading-[21px] text-muted">{sub}</p>}
+          </div>
+          <button aria-label="Close" onClick={onClose} className="w-8 h-8 -mr-1.5 -mt-1 rounded-full inline-flex items-center justify-center text-muted hover:text-ink hover:bg-surface"><X size={18} strokeWidth={1.75} /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto thin-scroll px-6 pb-6">{children}</div>
+      </div>
+    </div>
+  )
+}
+
 export function Chip({ active, children, onClick, testid, disabled }: { active?: boolean; children: ReactNode; onClick?: () => void; testid?: string; disabled?: boolean }) {
   return (
     <button
@@ -150,3 +229,5 @@ export const lookAlt = (l: Look) =>
   `You wearing ${l.name}: ${l.items.map((i) => i.product.title.split(' - ')[0].toLowerCase()).join(' and ')}`
 
 export const pieceName = (p: Product) => p.title.split(' - ')[0]
+/** Slots YouCam renders on the body; bags and accessories are shown, not tried on. */
+export const WEARABLE = new Set(['top', 'bottom', 'one_piece', 'layer'])

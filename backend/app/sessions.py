@@ -84,9 +84,103 @@ def scope(sess: dict | None) -> str | None:
 
 
 def gender(sess: dict | None) -> str | None:
+    """The wearer's gender (women | men | both | None). For a gift that is the recipient's, never the shopper's."""
     b = (sess or {}).get("brief") or {}
-    g = (b.get("recipient") or {}).get("gender") if b.get("for") == "other" else b.get("gender")
-    return g or b.get("gender")
+    if b.get("for") == "other":
+        return (b.get("recipient") or {}).get("gender")
+    return b.get("gender")
+
+
+def photo_gender(sess: dict | None) -> str | None:
+    """Which clothes the session photo can wear: a sample model's own gender, else what the shopper told us."""
+    s = sess or {}
+    if (s.get("src_url") or "").startswith("model:"):
+        m = model(s["src_url"][6:])
+        return m["gender"] if m else None
+    return s.get("photo_gender")
+
+
+# Chip values for recipients whose gender is implied (the same table the onboarding chips use).
+RELATION_GENDER = {"brother": "men", "boyfriend": "men", "husband": "men", "dad": "men", "father": "men",
+                   "son": "men", "sister": "women", "girlfriend": "women", "wife": "women", "mum": "women",
+                   "mom": "women", "mother": "women", "daughter": "women"}
+_UNSET = object()
+
+
+def update_brief(sid: str, *, for_: str | None = None, relation: str | None = None, gender_: str | None = None,
+                 occasion: str | None = None, budget=_UNSET) -> dict:
+    """Merge known facts into the session brief. None means 'no change'; budget=None means 'no limit'."""
+    s = get_session(sid) or {}
+    b = dict(s.get("brief") or {})
+    b.setdefault("for", "self")
+    if for_ == "self":
+        b["for"] = "self"
+    if for_ == "other" or relation:
+        b["for"] = "other"
+        rec = dict(b.get("recipient") or {})
+        if relation:
+            rel = relation.strip().lower()
+            if rel != rec.get("relation"):  # a different person: their gender isn't known from the last one
+                rec = {"relation": rel, **({"gender": RELATION_GENDER[rel]} if rel in RELATION_GENDER else {})}
+        b["recipient"] = rec
+    if gender_ in ("women", "men", "both"):
+        if b["for"] == "other":
+            if gender_ != "both":
+                b["recipient"] = {**(b.get("recipient") or {}), "gender": gender_}
+        else:
+            b["gender"] = gender_
+    if occasion and occasion.strip():
+        b["occasion"] = occasion.strip()
+    if budget is not _UNSET:
+        b["budget_max"] = budget
+    ex("update sessions set brief=? where id=?", b, sid)
+    return b
+
+
+BASICS = ("wearer", "gender", "occasion", "budget")
+
+
+def confirm(sid: str, fields) -> None:
+    """Mark brief fields as stated by the shopper in this chat. A carried-over brief (an earlier chat) starts
+    unconfirmed, so Ava asks the basics again with the remembered value first, instead of assuming it."""
+    s = get_session(sid) or {}
+    have = set(s.get("confirmed") or [])
+    new = have | {f for f in fields if f in BASICS}
+    if new != have:
+        ex("update sessions set confirmed=? where id=?", sorted(new), sid)
+
+
+def confirmed(sess: dict | None) -> set[str]:
+    return set((sess or {}).get("confirmed") or [])
+
+
+def apply_answers(sid: str, answers: list[dict]) -> None:
+    """Question-card answers arrive structured ({field, value}), so they land in the brief without guessing."""
+    for a in answers or []:
+        field, value = a.get("field"), str(a.get("value") or "").strip()
+        if not value:
+            continue
+        confirm(sid, [field, "gender"] if field == "wearer" and value.lower() in RELATION_GENDER else [field])
+        if field == "gender":
+            update_brief(sid, gender_=value.lower())
+        elif field == "occasion":
+            update_brief(sid, occasion=value)
+        elif field == "budget":
+            digits = value.replace("₹", "").replace(",", "").strip()
+            if value.lower() in ("none", "no limit", "any"):
+                update_brief(sid, budget=None)
+            elif digits.isdigit():
+                update_brief(sid, budget=int(digits))
+        elif field == "fit" and value.lower() in ("relaxed", "regular", "fitted"):
+            s = get_session(sid) or {}
+            ex("update sessions set brief=? where id=?", {**(s.get("brief") or {"for": "self"}), "fit": value.lower()},
+               sid)
+        # style / detail answers shape this one request; they travel in the message text, not the profile.
+        elif field == "wearer":
+            if value.lower() in ("self", "me", "myself"):
+                update_brief(sid, for_="self")
+            else:
+                update_brief(sid, relation=value)
 
 
 def create(user_token: str | None = None, store_id="northline") -> tuple[dict, bool, dict | None]:
@@ -94,9 +188,11 @@ def create(user_token: str | None = None, store_id="northline") -> tuple[dict, b
     token = user_token or secrets.token_urlsafe(18)[:24]
     last = q1("select * from sessions where user_token=? order by created_at desc limit 1", token)
     sid = new_id("s_", 16)
-    ex("insert into sessions(id, user_token, store_id, brief, photo_url, src_url, sample_model_id, created_at) "
-       "values (?,?,?,?,?,?,?,?)", sid, token, store_id, last and last["brief"], last and last["photo_url"],
-       last and last["src_url"], last and last["sample_model_id"], now())
+    ex("insert into sessions(id, user_token, store_id, brief, photo_url, src_url, sample_model_id, photo_gender, "
+       "created_at) values (?,?,?,?,?,?,?,?,?)", sid, token, store_id, last and last["brief"],
+       last and last["photo_url"], last and last["src_url"], last and last["sample_model_id"],
+       last and last.get("photo_gender"), now())
+    _seed_from_tryon(sid, token)
     returning = bool(last and last["brief"])
     profile = None
     if returning:
@@ -105,9 +201,30 @@ def create(user_token: str | None = None, store_id="northline") -> tuple[dict, b
     return get_session(sid), returning, profile
 
 
+def _seed_from_tryon(sid: str, token: str) -> None:
+    """A shopper with a TRYON profile told us their gender and gave a full-body photo during onboarding: every new
+    widget chat starts with both (gender counts as stated, so Ava doesn't ask it again)."""
+    from app import tryon
+    prof = tryon.for_token(token)
+    if not prof:
+        return
+    s = get_session(sid) or {}
+    b = dict(s.get("brief") or {"for": "self"})
+    if prof.get("gender") in ("women", "men", "both") and not b.get("gender"):
+        b["gender"] = prof["gender"]
+        ex("update sessions set brief=? where id=?", b, sid)
+    if b.get("gender") == prof.get("gender"):
+        confirm(sid, ["gender"])
+    if not s.get("photo_url") and prof.get("body_url") and prof.get("body_key"):
+        g = prof.get("gender") if prof.get("gender") in ("women", "men") else None
+        ex("update sessions set photo_url=?, src_url=?, photo_gender=? where id=?", prof["body_url"], prof["body_key"],
+           g, sid)
+
+
 def session_json(s: dict) -> dict:
     return {"id": s["id"], "user_token": s["user_token"], "brief": s["brief"], "photo_url": s["photo_url"],
-            "sample_model_id": s["sample_model_id"], "dna": dna.summary(s["user_token"], scope(s))}
+            "sample_model_id": s["sample_model_id"], "photo_gender": photo_gender(s),
+            "dna": dna.summary(s["user_token"], scope(s))}
 
 
 def forget(user_token: str) -> None:

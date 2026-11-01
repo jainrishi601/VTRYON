@@ -75,6 +75,34 @@ Test ids map to `docs/TEST_PLAN.md`: `U-*` are unit tests, `E2E-*` are browser t
 | Q7 | Demo video 2:30–2:55 (script in `docs/DEMO_SCRIPT.md`) | P0 | uploaded | todo |
 | Q8 | Devpost description + 8 screenshots | P0 | submitted | todo |
 
+## 4. Part B: chat-first widget
+
+| # | Item | P | Check | Status |
+|---|---|---|---|---|
+| PB1 | Chat first: no upfront form; question card (1–2 questions, Something else, Skip) fills the brief | P0 | E2E-2/3, test_answers_fill_the_brief | done (11-01) |
+| PB2 | Wearer gender saved from answers / `wearer` and enforced; gifts keep the shopper's own gender and taste apart | P0 | test_gender.py (gift, taste apart, wearer update) | done (11-01) |
+| PB3 | Product grid for "show me X" requests, ranked by Style DNA with a match % | P0 | E2E-15, test_product_grid_validation | done (11-01, live Claude) |
+| PB4 | Looks arrive flat; render only on Try on (no units on unopened looks) | P0 | E2E-4, test_looks_arrive_flat_and_render_on_tap | done (11-01) |
+| PB5 | Try-on sheet: photo once with consent, gender-filtered sample models; mismatch never renders, offers a matching model | P0 | E2E-13, test_women_look_never_renders_on_a_mens_photo | done (11-01) |
+| PB6 | Tap one piece: renders alone, "Pairs best with" scored pieces, add one, try the full look | P0 | E2E-14 + manual live check | done (11-01) |
+| PB7 | Swap on every piece; bag/accessory swaps reuse the render | P1 | test_bag_swap_reuses_the_render | done (11-01) |
+| PB8 | Head-to-toe looks (shoes, hats, watches) | P1 | needs a catalogue with those slots | todo |
+| PB9 | Pairing from the shopper's own wardrobe (TRYON platform, Part A) | P1 | — | todo |
+| PB10 | Widget restyled to the Elara storefront look (centred modal, Outfit, cards, try-on dialog), live render progress, Claude-written tip + Try next | P0 | e2e 28/28 + manual check vs wearetala.joinelara.shop | done (11-01) |
+
+## 5. Part A: TRYON platform (desktop web, `/tryon`)
+
+| # | Item | P | Check | Status |
+|---|---|---|---|---|
+| PA1 | Email accounts; the account's shopper token is shared with the store widget | P0 | test_signup_login_and_token_carry_over | done (11-01) |
+| PA2 | 8-step dark onboarding (goal, shop-for, photos, sizes, body, colours from selfie, vibe swipe on you, never list) | P0 | TRYON-1, test_onboarding_answers_shape_dna_and_the_widget | done (11-01, live: Claude palette, 7 vibe renders) |
+| PA3 | Style DNA page: Overview, Style Map constellation, Style Play, Timeline | P0 | TRYON-1, test_dna_page_and_forgetting, test_style_play_* | done (11-01) |
+| PA4 | Wardrobe: multi-piece photo tagging + crops, edit panel, "Allow in styling" | P0 | test_wardrobe_* | done (11-01, live: 3 pieces from one photo) |
+| PA5 | Widget pairs with the wardrobe ("Yours" in Pairs best with), profile seeds gender + photo | P0 | test_wardrobe_untagged_without_a_key_then_pairs_once_tagged | done (11-01, live) |
+| PA6 | Daily Picks: casual / formal / trendy, wardrobe first, Claude names, feedback, try on, regenerate | P0 | TRYON-1, test_daily_picks_* | done (11-01, live) |
+| PA7 | Stylist page: opens the store stylist with the profile; recent looks | P1 | TRYON-1 | done (11-01) |
+| PA8 | Swap drawer: "Shop new" or "From your wardrobe"; owned pieces cost 0, stay off the cart, aren't drawn | P0 | TRYON-2, test_swap_in_a_piece_from_your_own_wardrobe, test_alternatives_without_a_tryon_account_say_so | done (11-01) |
+
 ## Log
 
 - 11-01 — Valid Anthropic key. Evals v1 10/15 → v2 15/15 (judge now separates app cards from Ava's words; 2 repair rounds; 'more formal' replaces one piece; minor note once). Live UI run: onboarding → cached DNA tiles → live agent looks + live renders → follow-up in blue. Known UI nits: DNA result panel covers bottom tile buttons on short viewports; crew polling continues after Forget me.
@@ -86,3 +114,9 @@ Test ids map to `docs/TEST_PLAN.md`: `U-*` are unit tests, `E2E-*` are browser t
 - 11-01 00:40 — Key verified (1,000 units). cloth-v4 works; layered skirt→blouse on Nicobar refs looks clean. Catalogue = Nicobar export (pre-enriched, INR, women+men, on-model images, no footwear).
 - 11-01 — Backend core (B1–B7, B10–B16) in; 66 unit tests green. Live smoke: Olive Shore (2 calls) + bottom swap (1 call) on w1 = 6 units; 980 left.
 - 11-01 — Frontend: store + widget built; e2e 22/22 green (stub renders, fallback agent). Screens in docs/screens (re-run `SCREENS=1 pnpm --dir e2e screens` once the prerender cache is warm).
+- 11-01 — Part B chat-first widget (PB1–PB7). Backend 80 tests, e2e 28 passed / 4 skipped (desktop + mobile). Live check on real keys: men's beach looks, shirt alone on m1 + pairs, full look, sister's dress on w1 via model override; 8 units.
+- 11-01 — PB10: widget matches the Elara storefront UI; render shows live step + rotating status + progress bar. e2e 28 passed / 4 skipped; backend 80.
+- 11-01 — Basics first: every new chat asks gender (+ budget or occasion) before the first looks; remembered values are offered first, not assumed. Backend 81, e2e 28/4 skipped. Live: fresh 'beach outfit' → Women/Men card + budget card; same-chat follow-up asked nothing; New chat asked again with Men first.
+- 11-01 — Ask-first on every new request (enforced in the loop, not only the prompt). Live: 'shirts for men' → budget-per-shirt + style card → grid; 'beach outfit' in the same chat → budget-per-look + vibe card → looks; 'more colourful' → no card. Backend 83, e2e 28/4 skipped.
+- 11-01 — Part A TRYON platform (PA1–PA7). Backend 93, e2e 29 passed / 5 skipped. Live: onboarding with Claude colour analysis and 7 vibe renders (14 units), wardrobe tagging, daily picks with a try-on, Style Play, stylist page.
+- 11-01 — PA8 wardrobe swap. Fixed: widget kept a stale shopper token after a TRYON login on the same page (boot now re-reads it); live Claude rejected all-5-strict tools (grammar too large) and degraded every turn — remember_preference is no longer strict and a 400 now drops only what the API names. Backend 97, e2e 30 passed / 6 skipped.

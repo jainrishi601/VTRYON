@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState, type AnchorHTMLAttributes, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState, type AnchorHTMLAttributes, type ReactNode } from 'react'
 import { Search, ShoppingBag, X, Menu } from 'lucide-react'
 import { inr } from '../shared/format'
 import { cartActions, navigate, useCart, useLocation } from './lib'
 import { Home, Listing, PDP, NotFound } from './pages'
 import { Judge, Merchant } from './info'
+
+const TryonApp = lazy(() => import('../tryon/App'))
 
 export function Link({ to, children, ...rest }: { to: string; children: ReactNode } & AnchorHTMLAttributes<HTMLAnchorElement>) {
   return (
@@ -36,6 +38,8 @@ function route(path: string) {
 
 export default function App() {
   const { path } = useLocation()
+  // TRYON, the shopper's own style platform (onboarding, Style DNA, wardrobe), lives beside the store without its chrome.
+  if (path === '/tryon' || path.startsWith('/tryon/')) return <Suspense fallback={null}><TryonApp path={path} /></Suspense>
   return (
     <div className="min-h-screen flex flex-col">
       <Header path={path} />

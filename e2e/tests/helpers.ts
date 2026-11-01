@@ -1,6 +1,6 @@
 import { expect, type APIRequestContext, type Page } from '@playwright/test'
 
-export const API = 'http://localhost:8000'
+export const API = `http://localhost:${process.env.E2E_API_PORT ?? '8000'}`
 
 /** Playwright CSS/test-id locators pierce open shadow roots, so widget elements are found directly. */
 export const w = (page: Page, id: string) => page.getByTestId(id)
@@ -10,25 +10,31 @@ export async function openWidget(page: Page) {
   await expect(w(page, 'elara-panel')).toHaveAttribute('aria-hidden', 'false')
 }
 
-/** Full UI onboarding: Me → Beach trip → budget 7000 → sample model → DNA picker. */
-export async function onboardToDna(page: Page) {
-  await page.goto('/')
-  await openWidget(page)
-  await expect(w(page, 'who-continue')).toBeDisabled()
-  await w(page, 'occasion-beach-trip').click()
-  await expect(w(page, 'budget-value')).toContainText('7,000')
-  await w(page, 'who-continue').click()
-  await w(page, 'sample-model-w1').click()
-  await expect(w(page, 'photo-ok')).toBeVisible()
-  await w(page, 'photo-continue').click()
-  await expect(w(page, 'dna-picker')).toBeVisible()
+/** Chat first: answer whatever the question card asks (pick the option matching `prefer`, else the first) until
+ *  outfit cards or a product grid arrive. */
+export async function answerUntilResults(page: Page, prefer: RegExp = /women/i) {
+  const results = page.locator('[data-testid=look-card], [data-testid=grid-card]')
+  for (let i = 0; i < 3; i++) {
+    const card = w(page, 'clarify-card')
+    await expect(results.first().or(card)).toBeVisible({ timeout: 60_000 })
+    if (await results.count()) return
+    const opts = w(page, 'clarify-option')
+    const match = opts.filter({ hasText: prefer })
+    await ((await match.count()) ? match.first() : opts.first()).click()
+    if (await w(page, 'clarify-card').count()) { // a second question on the same card
+      const o2 = w(page, 'clarify-option')
+      const m2 = o2.filter({ hasText: prefer })
+      await ((await m2.count()) ? m2.first() : o2.first()).click()
+    }
+  }
+  await expect(results.first()).toBeVisible({ timeout: 60_000 })
 }
 
 /** API-side session with a brief and a sample-model photo; returns ids to seed the browser with. */
-export async function apiSession(request: APIRequestContext, brief: Record<string, unknown> = { for: 'self', gender: 'women', occasion: 'Beach trip', budget_max: 7000 }) {
+export async function apiSession(request: APIRequestContext, brief: Record<string, unknown> = { for: 'self', gender: 'women', occasion: 'Beach trip', budget_max: 7000 }, model = 'w1') {
   const s = await (await request.post(`${API}/api/session`, { data: {} })).json()
   await request.patch(`${API}/api/session/${s.session_id}`, { data: { brief } })
-  await request.post(`${API}/api/session/${s.session_id}/photo`, { data: { sample_model_id: 'w1' } })
+  await request.post(`${API}/api/session/${s.session_id}/photo`, { data: { sample_model_id: model } })
   return { sid: s.session_id as string, token: s.user_token as string }
 }
 
@@ -44,14 +50,15 @@ export async function seedBrowser(page: Page, token: string, sid?: string, extra
 }
 
 /** Seeded session → chat opens → send a brief → wait for outfit cards. */
-export async function chatWithLooks(page: Page, request: APIRequestContext) {
-  const { sid, token } = await apiSession(request)
+export async function chatWithLooks(page: Page, request: APIRequestContext, model = 'w1') {
+  const { sid, token } = await apiSession(request, undefined, model)
   await seedBrowser(page, token, sid)
   await page.goto('/')
   await openWidget(page)
   await expect(w(page, 'chat')).toBeVisible()
   await w(page, 'composer-input').fill('Goa beach trip, ₹7,000, easy and minimal.')
   await w(page, 'composer-send').click()
+  await answerUntilResults(page)
   await expect(w(page, 'look-card').first()).toBeVisible({ timeout: 45_000 })
   return { sid, token }
 }

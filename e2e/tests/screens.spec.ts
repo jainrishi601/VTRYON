@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
-import { API, openWidget, w } from './helpers'
+import { API, answerUntilResults, openWidget, w } from './helpers'
 
 // Happy-path screenshot set for docs/screens (Devpost). Opt-in: SCREENS=1 pnpm --dir e2e screens
 test.skip(!process.env.SCREENS, 'set SCREENS=1 to capture docs/screens')
@@ -35,23 +35,18 @@ test('capture screens', async ({ page, request }, info) => {
 
   await page.goto('/women')
   await openWidget(page)
-  await w(page, 'occasion-beach-trip').click()
-  await shot('04-onboarding-who')
-  await w(page, 'who-continue').click()
-  await w(page, 'sample-model-w1').click()
-  await expect(w(page, 'photo-ok')).toBeVisible()
-  await shot('05-onboarding-photo')
-  await w(page, 'photo-continue').click()
-  await expect(page.locator('[data-testid=dna-tile][data-status=ready], [data-testid=dna-tile][data-status=failed]')).toHaveCount(4, { timeout: 60_000 })
-  await w(page, 'dna-heart').nth(0).click()
-  await w(page, 'dna-heart').nth(2).click()
-  await w(page, 'dna-cross').nth(1).click()
-  await expect(w(page, 'dna-name')).toBeVisible()
-  await page.evaluate(() => { const el = document.querySelector('#elara-root')!.shadowRoot!.querySelector('[data-testid=onboarding-dna]'); if (el) el.scrollTop = 0 })
-  await shot('06-style-dna')
-  await w(page, 'dna-continue').click()
+  await shot('04-chat-first')
+  await w(page, 'composer-input').fill('Beach party looks, under ₹7,000')
+  await w(page, 'composer-send').click()
+  await expect(w(page, 'clarify-card')).toBeVisible({ timeout: 60_000 })
+  await shot('05-question-card')
+  await answerUntilResults(page, /women/i)
   const card = w(page, 'look-card').first()
   await expect(card).toBeVisible({ timeout: 60_000 })
+  await card.getByTestId('look-try-on').click()
+  await expect(w(page, 'tryon-sheet')).toBeVisible()
+  await shot('06-tryon-sheet')
+  await w(page, 'tryon-model-w1').click()
   await expect(card.locator('[data-render-status=ready], [data-render-status=failed]')).toHaveCount(1, { timeout: 60_000 })
   await page.evaluate(() => { const el = document.querySelector('#elara-root')!.shadowRoot!.querySelector('[data-testid=chat] > div'); if (el) el.scrollTop = 0 })
   await shot('07-chat-looks')

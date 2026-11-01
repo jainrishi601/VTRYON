@@ -1,5 +1,23 @@
 # Design system: "Linen & Ink"
 
+> **11-01 update: the widget follows the Elara storefront look** (as on wearetala.joinelara.shop). The store pages keep
+> Linen & Ink; the widget now uses:
+> - **Shell:** a centred modal (max 800 px wide, 90vh, 16 px radius, dimmed page), full screen on phones; a bottom-centre
+>   "Need help choosing?" launcher pill.
+> - **Type and colour:** one sans, **Outfit** (400–700), at 14 px body. Neutral greys: surface `#f5f5f5`, soft `#ebebeb`,
+>   line `#e5e5e5`, muted `#737373`, ink `#0a0a0a`. Black pill actions; a pink→blue gradient hairline on the composer.
+> - **Look card:** 16 px radius with a faint violet top glow; a black numbered circle, the name, the score and a select
+>   circle; a grey "Why this works" pill that opens to the reason, a "Finish it" tip and the score reason; 112 px
+>   square piece thumbnails with ↻ swap and ↗ product link; once tried on, the render sits beside the pieces; a footer
+>   with Total, Try on (outline) and Add to cart (black).
+> - **Status lines:** a filled check when done; a shimmer sweep on the active line. While a look renders, the box shows
+>   the real step ("Piece 1 of 2 · Classic Shorts"), a rotating line of what the try-on is doing, and a progress bar.
+> - **Try-on:** a centred dialog with the pieces, a large dashed photo dropzone, a consent box, and a full-width
+>   Generate Try-On button, with gender-matched sample models below.
+> - **After the answer:** "Try next" follow-up chips written by Claude.
+>
+> The tokens below describe the store pages.
+
 Store: **Northline** (fictional resort/contemporary label; no third-party brand anywhere on screen).
 Stylist name inside the widget: **Ava**. Product name: **Elara Commerce**.
 

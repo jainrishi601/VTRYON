@@ -26,10 +26,11 @@ export interface Product {
   vto_ready: boolean
   sizes_in_stock: string[]
   product_url: string
+  owned?: boolean // one of the shopper's own TRYON wardrobe pieces (price 0, never in the cart)
 }
 
 export type ScoreBand = 'great' | 'works' | 'bold'
-export type RenderStatus = 'pending' | 'rendering' | 'ready' | 'failed'
+export type RenderStatus = 'idle' | 'pending' | 'rendering' | 'ready' | 'failed' // idle: flat until the shopper taps Try on
 
 export interface Look {
   id: string
@@ -44,12 +45,15 @@ export interface Look {
   budget_max: number | null
   over_budget_by: number | null
   parent_look_id: string | null
-  render: { status: RenderStatus; image_url: string | null; steps_done: number; steps_total: number; cached: boolean; error: string | null }
+  tip: string | null // Claude's finishing tip for things the store doesn't sell
+  gender: 'women' | 'men' | null // the look's wearer gender (unisex pieces don't count)
+  model_id: string | null // sample model it renders on instead of the session photo
+  render: { status: RenderStatus; image_url: string | null; steps_done: number; steps_total: number; cached: boolean; error: string | null; code: 'no_photo' | 'minor' | 'gender_mismatch' | null }
   video: { status: 'none' | 'pending' | 'ready' | 'failed'; url: string | null }
   before_url: string | null
 }
 
-export interface Alternative { product: Product; score: number; score_band: ScoreBand; reason: string; price_delta: number }
+export interface Alternative { product: Product; score: number; score_band: ScoreBand; reason: string; price_delta: number; owned?: boolean /* from the shopper's TRYON wardrobe */ }
 
 export interface Brief {
   for: 'self' | 'other'
@@ -64,7 +68,12 @@ export interface Brief {
 
 export interface DnaSummary { vibes: Record<string, number>; colors: Record<string, number>; never: string[]; name: string | null; traits: string[] }
 export interface Profile { brief: Brief | null; dna: DnaSummary; last_occasion: string | null }
-export interface Session { id: string; user_token: string; brief: Brief | null; photo_url: string | null; sample_model_id: string | null; dna: DnaSummary }
+export interface Session { id: string; user_token: string; brief: Brief | null; photo_url: string | null; sample_model_id: string | null; photo_gender: 'women' | 'men' | null; dna: DnaSummary }
+export type ClarifyField = 'wearer' | 'gender' | 'occasion' | 'budget' | 'style' | 'fit' | 'detail'
+export interface ClarifyQuestion { field: ClarifyField; question: string; options: { label: string; value: string }[] }
+export interface Clarify { questions: ClarifyQuestion[] }
+export interface Answer { field: ClarifyField; value: string }
+export interface ProductCard { product: Product; match: number | null }
 
 export interface StoreInfo {
   id: string; name: string; currency: string; genders: string[]; slots: Slot[]; occasions: string[]

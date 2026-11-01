@@ -47,7 +47,7 @@ def add_look(crew_id: str, look_id: str) -> None:
 def join(crew_id: str, display_name: str, photo_url=None, src_key=None) -> dict:
     m = _add_member(crew_id, secrets.token_urlsafe(18)[:24], display_name.strip()[:40] or "Guest", photo_url, src_key)
     if photo_url:
-        for cl in q("select look_id from crew_looks where crew_id=? order by added_at", crew_id):
+        for cl in q("select look_id from crew_looks where crew_id=? order by added_at, rowid", crew_id):
             _member_render(crew_id, cl["look_id"], m)
     return m
 
@@ -114,10 +114,10 @@ def crew_json(crew_id: str, member_token: str | None = None) -> dict | None:
     c = q1("select * from crews where id=?", crew_id)
     if not c:
         return None
-    members = q("select * from crew_members where crew_id=? order by created_at", crew_id)
+    members = q("select * from crew_members where crew_id=? order by created_at, rowid", crew_id)
     comments = q("select c.*, m.display_name from crew_comments c join crew_members m on m.id=c.member_id "
                  "where c.crew_id=? order by c.created_at", crew_id)
-    crew_looks = q("select * from crew_looks where crew_id=? order by added_at", crew_id)
+    crew_looks = q("select * from crew_looks where crew_id=? order by added_at, rowid", crew_id)
     out_looks = []
     for cl in crew_looks:
         lj = looks.look_json(cl["look_id"])

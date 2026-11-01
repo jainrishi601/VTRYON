@@ -6,14 +6,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
 from collections.abc import AsyncIterator
 
 import anthropic
 
-from app import config, db, looks
+from app import config, db, looks, scoring, sessions
 from app.agent import context, fallback, tools
-from app.agent.prompts import FINAL_ROUND_NUDGE, REPAIR_NOTE, SYSTEM_PROMPT
+from app.agent.prompts import ASK_FIRST, FINAL_ROUND_NUDGE, REPAIR_NOTE, SYSTEM_PROMPT
 
 log = logging.getLogger("elara.agent")
 
@@ -46,6 +45,8 @@ class Out:
     def __init__(self):
         self.text = ""
         self.look_ids: list[str] = []
+        self.product_ids: list[str] = []
+        self.try_next: list[str] = []
         self.clarify: dict | None = None
         self.summary = ""
         self.done = False  # a terminal answer has been delivered
@@ -64,16 +65,20 @@ class Out:
 
 
 def persist(t: context.Turn, out: Out) -> int:
-    content = {"text": out.text.strip(), "look_ids": out.look_ids, "clarify": out.clarify,
-               "ref_map": t.refs.by_ref, "summary": out.summary}
+    content = {"text": out.text.strip(), "look_ids": out.look_ids, "product_ids": out.product_ids,
+               "try_next": out.try_next,
+               "clarify": out.clarify, "ref_map": t.refs.by_ref, "summary": out.summary}
     return db.ex("insert into messages(session_id, role, content, created_at) values (?,?,?,?)",
                  t.sid, "assistant", content, db.now())
 
 
-async def turn(sid: str, message: str, look_id: str | None = None, attachment_url: str | None = None
-               ) -> AsyncIterator[Event]:
-    """The whole turn as (event, data) pairs. Always ends with `done`."""
+async def turn(sid: str, message: str, look_id: str | None = None, attachment_url: str | None = None,
+               answers: list[dict] | None = None) -> AsyncIterator[Event]:
+    """The whole turn as (event, data) pairs. Always ends with `done`.
+    `answers` are question-card picks ({field, value}); they go into the brief before Claude sees the turn."""
     yield status("read", "Reading your message")
+    if answers and sessions.get_session(sid):
+        sessions.apply_answers(sid, answers)
     t = context.load(sid, message, look_id, attachment_url)
     if t is None:
         yield "error", {"message": "This chat has expired. Start a new chat to keep styling."}
@@ -83,7 +88,8 @@ async def turn(sid: str, message: str, look_id: str | None = None, attachment_ur
     if len(TRACES) > 200:
         TRACES.pop(next(iter(TRACES)))
     db.ex("insert into messages(session_id, role, content, created_at) values (?,?,?,?)", sid, "user",
-          {"text": t.message, "look_id": look_id, "attachment_url": attachment_url}, db.now())
+          {"text": t.message, "look_id": look_id, "attachment_url": attachment_url, "answers": answers or None},
+          db.now())
     yield status("read", "Reading your message", "done")
     out = Out()
     if config.ANTHROPIC_API_KEY:
@@ -101,8 +107,28 @@ async def turn(sid: str, message: str, look_id: str | None = None, attachment_ur
     yield "done", {}
 
 
+FALLBACK_QUESTIONS = {
+    "gender": {"field": "gender", "question": "Should I shop women's or men's?",
+               "options": [{"label": "Women", "value": "women"}, {"label": "Men", "value": "men"}]},
+    "occasion": {"field": "occasion", "question": "What's the occasion?",
+                 "options": [{"label": o, "value": o} for o in config.STORE["occasions"][:4]]},
+}
+
+
 async def _fallback(t: context.Turn, out: Out) -> AsyncIterator[Event]:
+    """No Claude: never guess the wearer's gender or the occasion; ask for them with the card instead."""
     t.trace.append({"fallback": True})
+    missing, ok = [], sessions.confirmed(t.session)
+    if len(config.STORE["genders"]) > 1 and (t.target_gender not in ("women", "men", "both") or "gender" not in ok):
+        missing.append("gender")
+    if not (t.brief or {}).get("occasion"):
+        missing.append("occasion")
+    if missing:
+        out.clarify = {"questions": [FALLBACK_QUESTIONS[k] for k in missing]}
+        yield "clarify", out.clarify
+        out.done = True
+        persist(t, out)
+        return
     yield status("style", "Styling your looks")
     msg, specs = fallback.compose(t)
     out.new_segment()
@@ -121,8 +147,8 @@ async def _deliver(t, out: Out, specs: list[dict], parent: str | None, budget: i
         else:
             b["age_range"] = "13-17"
         db.ex("update sessions set brief=? where id=?", b, t.sid)
-    made = [looks.create_look(t.sid, s["name"], s["why"], s["items"], parent_look_id=parent, budget_max=budget)
-            for s in specs]
+    made = [looks.create_look(t.sid, s["name"], s["why"], s["items"], parent_look_id=parent, budget_max=budget,
+                              tip=s.get("tip")) for s in specs]
     made = [m for m in made if m and m["items"]]
     out.look_ids = [m["id"] for m in made]
     out.summary = "; ".join(
@@ -134,38 +160,89 @@ async def _deliver(t, out: Out, specs: list[dict], parent: str | None, budget: i
                                   for m in made]})
     mid = persist(t, out)
     yield status("style", "Styling your looks", "done")
+    # Looks arrive flat; one renders only when the shopper taps Try on (saves units on looks nobody opens).
+    # An edit of a look already on the shopper keeps it on: the child re-renders just the changed piece.
     for m in made:
-        looks.start_render(m["id"])
-    fresh = [looks.look_json(m["id"]) for m in made]
-    yield "looks", {"looks": fresh, "message_id": mid}
-    if not made:
+        par = looks.look_json(m["parent_look_id"]) if m["parent_look_id"] else None
+        if par and par["render"]["status"] == "ready":
+            looks.start_render(m["id"], model_id=par.get("model_id"))
+    yield "looks", {"looks": [looks.look_json(m["id"]) for m in made], "message_id": mid}
+    if out.try_next:
+        yield "suggest", {"items": out.try_next}
+    rendering = [m["id"] for m in made if looks.look_json(m["id"])["render"]["status"] not in looks.TERMINAL]
+    if rendering:
+        yield status("render", "Updating it on you")
+        async for lk in looks.wait_settled(rendering, timeout=RENDER_WAIT):
+            yield "look", {"look": lk}
+        yield status("render", "Updated on you", "done")
+
+
+def apply_wearer(t: context.Turn, w: dict | None) -> None:
+    """Save who Claude is dressing into the brief and this turn, so validation and renders use that gender."""
+    w = w or {}
+    for_ = w.get("for") if w.get("for") in ("self", "other") else None
+    gender = w.get("gender") if w.get("gender") in ("women", "men") else None
+    relation = (w.get("relation") or "").strip() or None
+    occasion = (w.get("occasion") or "").strip() or None
+    if for_ == "self":
+        relation = None
+    if not (for_ or gender or relation or occasion):
         return
-    yield status("render", "Rendering on you")
-    t0 = time.monotonic()
-    async for lk in looks.wait_settled(out.look_ids, timeout=RENDER_WAIT):
-        yield "look", {"look": lk}
-    done = [looks.look_json(i) for i in out.look_ids]
-    ok = sum(1 for d in done if d and d["render"]["status"] == "ready")
-    label = f"Rendered {ok} of {len(done)} on you in {time.monotonic() - t0:.1f}s" if ok else "Rendering on you"
-    yield status("render", label, "done")
+    t.brief = sessions.update_brief(t.sid, for_=for_, relation=relation, gender_=gender, occasion=occasion)
+    sessions.confirm(t.sid, [f for f, v in (("wearer", for_ or relation), ("gender", gender), ("occasion", occasion)) if v])
+    t.session["brief"] = t.brief
+    t.target_gender = sessions.gender(t.session)
+    if t.brief.get("for") == "other" or t.brief.get("recipient"):  # (re)load: the recipient may be someone new
+        t.profiles["recipient"] = context._profile(t.user_token, sessions.scope({"brief": {**t.brief, "for": "other"}}))
+    context.use(t, "recipient" if t.brief.get("for") == "other" else "shopper")
+    t.trace.append({"wearer": w, "brief": t.brief})
 
 
-_degrade = 0  # 0: full request · 1: without beta extras (fallbacks, auto-cache) · 2: also without strict tools
+async def _products(t: context.Turn, out: Out, ps: list[dict], inp: dict) -> AsyncIterator[Event]:
+    msg = (inp.get("message") or "").strip()
+    if msg:
+        out.new_segment()
+        yield out.say(msg)
+    out.product_ids = [p["id"] for p in ps]
+    out.try_next = tools.clean_try_next(inp.get("try_next"))
+    out.summary = "products: " + ", ".join(f"{p['title']} ({t.refs.ref(p['id'])})" for p in ps)
+    out.done = True
+    t.trace.append({"products": out.product_ids})
+    mid = persist(t, out)
+    yield status("style", "Picking pieces for you", "done")
+    yield "products", {"products": product_cards(ps, t.taste), "message_id": mid}
+    if out.try_next:
+        yield "suggest", {"items": out.try_next}
+
+
+def product_cards(ps: list[dict], taste: dict | None) -> list[dict]:
+    """Grid cards: the product plus a Style DNA match (only when there is a DNA to match against)."""
+    has = bool(taste and any(taste.values()))
+    return [{"product": p, "match": round(scoring.dna_score([p], taste)) if has else None} for p in ps]
+
+
+_dropped: set[str] = set()  # request features the API rejected this process: "strict" (tool grammar), "betas"
 
 
 def _params(messages: list[dict]) -> dict:
-    p = dict(model=config.AGENT_MODEL, max_tokens=16000, system=SYSTEM, messages=messages,
-             tools=tools.TOOLS if _degrade < 2 else [{k: v for k, v in x.items() if k != "strict"} for x in tools.TOOLS],
+    ts = tools.TOOLS if "strict" not in _dropped else [{k: v for k, v in x.items() if k != "strict"} for x in tools.TOOLS]
+    p = dict(model=config.AGENT_MODEL, max_tokens=16000, system=SYSTEM, messages=messages, tools=ts,
              thinking={"type": "adaptive"}, output_config={"effort": EFFORT})
-    if _degrade < 1:
+    if "betas" not in _dropped:
         p.update(cache_control={"type": "ephemeral"}, betas=["server-side-fallback-2026-07-01"], fallbacks="default")
     return p
+
+
+def _drop_for(message: str) -> str | None:
+    """Which feature to drop after a 400: the strict-tool grammar if that's what the API names, else the betas."""
+    m = message.lower()
+    first = "strict" if ("grammar" in m or "strict" in m) else "betas"
+    return next((f for f in (first, "betas", "strict") if f not in _dropped), None)
 
 
 async def _call(messages: list[dict], out: Out, first: list[bool]) -> AsyncIterator[Event | tuple[str, object]]:
     """One streamed Claude call. Yields text events live, then ("final", message). If the API rejects the request
     shape (400) before anything streamed, degrade once per level and retry: a demo must not die on a beta flag."""
-    global _degrade
     while True:
         streamed = False
         try:
@@ -182,16 +259,17 @@ async def _call(messages: list[dict], out: Out, first: list[bool]) -> AsyncItera
                     yield "final", await stream.get_final_message()
                     return
         except anthropic.BadRequestError as e:
-            if streamed or _degrade >= 2:
+            drop = None if streamed else _drop_for(e.message)
+            if not drop:
                 raise
-            _degrade += 1
-            log.warning("Claude rejected the request (%s); retrying at degrade level %d", e.message, _degrade)
+            _dropped.add(drop)
+            log.warning("Claude rejected the request (%s); retrying without %s", e.message, drop)
 
 
 async def _claude(t: context.Turn, out: Out) -> AsyncIterator[Event]:
     messages = [{"role": "user", "content": context.user_content(t)}]
     yield status("understand", "Understanding what you're looking for")
-    first, failures, repairs, n_search = [True], 0, 0, 0
+    first, failures, repairs, n_search, gated = [True], 0, 0, 0, False
     best: tuple[list[dict], dict] | None = None  # valid looks from a failed present_looks, used if repair fails
     rnd = 0
     while rnd < MAX_ROUNDS:
@@ -250,10 +328,38 @@ async def _claude(t: context.Turn, out: Out) -> AsyncIterator[Event]:
                     results[u.id] = {"content": f"could not save: {e}", "is_error": True}
 
         present = next((u for u in uses if u.name == "present_looks"), None)
+        grid = next((u for u in uses if u.name == "present_products"), None)
         clarify = next((u for u in uses if u.name == "ask_clarification"), None)
-        if present:
+        # A new request is answered with a question card first (CLAUDE.md rule 5). Enforced here, not just asked.
+        shown = present or grid
+        if shown and not clarify and shown.input.get("request") == "new" and not t.after_card and not gated \
+                and rnd < MAX_ROUNDS - 1:
+            gated = True
+            results[shown.id] = {"content": _json({"ok": False, "errors": [ASK_FIRST]}), "is_error": True}
+            t.trace.append({"gate": "ask_first"})
+            present = grid = None
+        if grid and not present:
+            inp = grid.input
+            t.trace.append({"tool": "present_products", "input": inp})
+            apply_wearer(t, inp.get("wearer"))
+            if not repairs:
+                yield status("style", "Picking pieces for you")
+            ps, errs = tools.validate_products(t, inp)
+            if len(ps) < 2 and errs and repairs < 2 and rnd < MAX_ROUNDS - 1:
+                repairs += 1
+                results[grid.id] = {"content": _json({"ok": False, "errors": errs, "note": REPAIR_NOTE}),
+                                    "is_error": True}
+                t.trace.append({"repair": errs})
+            elif ps:
+                async for ev in _products(t, out, ps, inp):
+                    yield ev
+                return
+            else:
+                raise RuntimeError(f"no valid products: {errs}")
+        elif present:
             inp = present.input
             t.trace.append({"tool": "present_looks", "input": inp})
+            apply_wearer(t, inp.get("wearer"))
             if not repairs:
                 yield status("style", "Styling your looks")
             checked, errs = tools.validate(t, inp)
@@ -279,9 +385,10 @@ async def _claude(t: context.Turn, out: Out) -> AsyncIterator[Event]:
                 return
         elif clarify:
             q = clarify.input
-            chips = [c.strip() for c in q.get("chips") or [] if c and c.strip()][:4]
-            out.clarify = {"question": q["question"].strip(), "chips": chips}
             t.trace.append({"tool": "ask_clarification", "input": q})
+            out.clarify = tools.clean_clarify(q)
+            if not out.clarify:
+                raise RuntimeError("empty clarification")
             yield "clarify", out.clarify
             out.done = True
             persist(t, out)
@@ -310,8 +417,9 @@ async def _present(t, out: Out, valid: list[dict], inp: dict) -> AsyncIterator[E
     if parent not in {lk["id"] for lk in t.current}:
         parent = None
     budget = inp.get("budget_per_look") or t.budget
-    specs = [{"name": c["spec"]["name"].strip(), "why": c["spec"]["why"].strip(),
+    specs = [{"name": c["spec"]["name"].strip(), "why": c["spec"]["why"].strip(), "tip": c["spec"].get("tip") or "",
               "items": [(slot, p["id"]) for slot, p in c["items"]]} for c in valid]
+    out.try_next = tools.clean_try_next(inp.get("try_next"))
     async for ev in _deliver(t, out, specs, parent, budget, minor=bool(inp.get("wearer_is_minor"))):
         yield ev
 

@@ -1,38 +1,36 @@
 import { test, expect } from '@playwright/test'
-import { API, apiSession, chatWithLooks, onboardToDna, openWidget, rupees, seedBrowser, w } from './helpers'
+import { API, answerUntilResults, apiSession, chatWithLooks, openWidget, rupees, seedBrowser, w } from './helpers'
 
 test('E2E-1 store loads, widget mounts in a shadow root, fonts are isolated', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByRole('link', { name: 'Northline home' })).toBeVisible()
   expect(await page.evaluate(() => !!document.querySelector('#elara-root')?.shadowRoot)).toBe(true)
-  await expect(w(page, 'elara-launcher')).toHaveText(/Style me/)
+  await expect(w(page, 'elara-launcher')).toHaveText(/Need help choosing/)
   // Hostile host CSS must not reach the widget.
   await page.addStyleTag({ content: '* { font-family: "Comic Sans MS", cursive !important; letter-spacing: 3px !important; }' })
   const font = await w(page, 'elara-launcher').evaluate((el) => getComputedStyle(el).fontFamily)
-  expect(font).toContain('Hanken Grotesk')
+  expect(font).toContain('Outfit')
   // And the one-script-tag embed is what loaded it.
   expect(await page.locator('script[src="/widget.js"][data-store-id="northline"]').count()).toBe(1)
 })
 
-test('E2E-2/3/4 onboarding → Style DNA → opener → outfit cards', async ({ page }) => {
-  await test.step('E2E-2 onboarding lands on the DNA picker', async () => {
-    await onboardToDna(page)
+test('E2E-2/3/4 chat first → question card → flat looks → Try on asks for a photo once → render', async ({ page }) => {
+  await test.step('E2E-2 the widget opens straight into chat, no form', async () => {
+    await page.goto('/')
+    await openWidget(page)
+    await expect(w(page, 'chat')).toBeVisible()
+    await expect(page.locator('[data-testid^=onboarding-]')).toHaveCount(0)
   })
-  await test.step('E2E-3 DNA picker: 4 tiles, heart two, name appears, opener is sent', async () => {
-    const tiles = w(page, 'dna-tile')
-    await expect(tiles).toHaveCount(4)
-    await expect(page.locator('[data-testid=dna-tile][data-status=ready], [data-testid=dna-tile][data-status=failed]')).toHaveCount(4, { timeout: 30_000 })
-    await expect(w(page, 'dna-continue')).toBeDisabled()
-    await w(page, 'dna-heart').nth(0).click()
-    await w(page, 'dna-heart').nth(1).click()
-    await expect(w(page, 'dna-name')).not.toBeEmpty()
-    await w(page, 'dna-continue').click()
-    await expect(w(page, 'user-msg').first()).toContainText('Beach trip')
-    await expect(w(page, 'user-msg').first()).toContainText('7,000')
+  await test.step('E2E-3 the question card fills in what is missing (gender first)', async () => {
+    await w(page, 'composer-input').fill('Beach party looks, under ₹7,000')
+    await w(page, 'composer-send').click()
+    await expect(w(page, 'clarify-card')).toBeVisible({ timeout: 60_000 })
+    await expect(w(page, 'clarify-option').first()).toBeVisible()
+    await expect(w(page, 'clarify-skip')).toBeVisible()
+    await answerUntilResults(page, /women/i)
   })
-  await test.step('E2E-4 streamed status, 2–3 cards within budget, renders resolve', async () => {
+  await test.step('E2E-4 2–3 cards within budget, all flat until tapped; Try on renders after one photo', async () => {
     const cards = w(page, 'look-card')
-    await expect(cards.first()).toBeVisible({ timeout: 45_000 })
     const n = await cards.count()
     expect(n).toBeGreaterThanOrEqual(2)
     expect(n).toBeLessThanOrEqual(3)
@@ -41,15 +39,60 @@ test('E2E-2/3/4 onboarding → Style DNA → opener → outfit cards', async ({ 
       const total = rupees(await card.getByTestId('look-total').innerText())
       const over = await card.getByText(/over budget/).count()
       expect(total <= 7000 || over > 0).toBe(true)
-      await expect(card.locator('[data-render-status=ready], [data-render-status=failed]')).toHaveCount(1, { timeout: 20_000 })
+      await expect(card.locator('[data-render-status=idle]')).toHaveCount(1) // nothing spent yet
+      await expect(card.locator('[data-testid^=piece-row]').first()).toBeVisible()
     }
-    await expect(w(page, 'status-done').first()).toBeVisible()
+    await cards.first().getByTestId('look-try-on').click()
+    await expect(w(page, 'tryon-sheet')).toBeVisible()
+    await expect(page.locator('[data-testid^=tryon-model-m]')).toHaveCount(0) // women's look: women's models only
+    await w(page, 'tryon-model-w1').click()
+    await expect(cards.first().locator('[data-render-status=ready], [data-render-status=failed]')).toHaveCount(1, { timeout: 30_000 })
+    await expect(cards.nth(1).locator('[data-render-status=idle]')).toHaveCount(1) // the others stay flat
   })
+})
+
+test('E2E-13 a women’s look never renders on a men’s photo; the sheet offers a women’s model instead', async ({ page, request }) => {
+  await chatWithLooks(page, request, 'm1')
+  const card = w(page, 'look-card').first()
+  await card.getByTestId('look-try-on').click()
+  await expect(w(page, 'tryon-mismatch')).toBeVisible()
+  await expect(page.locator('[data-testid^=tryon-model-m]')).toHaveCount(0)
+  await w(page, 'tryon-model-w1').click()
+  await expect(card.locator('[data-render-status=ready]')).toHaveCount(1, { timeout: 30_000 })
+  await expect(card.getByText('On the model')).toBeVisible()
+})
+
+test('E2E-14 tap one piece: it renders alone, with scored pieces that pair best', async ({ page, request }) => {
+  await chatWithLooks(page, request)
+  const card = w(page, 'look-card').filter({ has: page.locator('[data-testid=piece-tryon-top], [data-testid=piece-tryon-one_piece]') }).first()
+  await card.locator('[data-testid=piece-tryon-top], [data-testid=piece-tryon-one_piece]').first().click()
+  await expect(w(page, 'tryon-result')).toBeVisible({ timeout: 20_000 })
+  await expect(w(page, 'tryon-result').locator('img[alt^="You wearing"]').first()).toBeVisible({ timeout: 30_000 })
+  await expect(w(page, 'tryon-pair').first()).toBeVisible()
+  await expect(w(page, 'tryon-pairs').getByTestId('score-badge').first()).toBeVisible()
+  await expect(w(page, 'tryon-full-look')).toBeVisible()
+})
+
+test('E2E-15 a request for a kind of piece gets a product grid (live Claude only)', async ({ page, request }) => {
+  const st = await (await request.get(`${API}/api/status`)).json()
+  test.skip(!st.anthropic?.configured, 'the deterministic fallback only composes looks')
+  const { sid, token } = await apiSession(request)
+  await seedBrowser(page, token, sid)
+  await page.goto('/')
+  await openWidget(page)
+  await w(page, 'composer-input').fill('show me some white shirts')
+  await w(page, 'composer-send').click()
+  await answerUntilResults(page)
+  const cards = w(page, 'grid-card')
+  await expect(cards.first()).toBeVisible()
+  expect(await cards.count()).toBeGreaterThanOrEqual(2)
+  await expect(cards.first().getByTestId('product-add')).toBeVisible()
 })
 
 test('E2E-5 viewer slider → bottom hotspot → swap drawer → new render in history', async ({ page, request }) => {
   await chatWithLooks(page, request)
   const card = w(page, 'look-card').filter({ has: page.getByTestId('swap-bottom') }).first()
+  await card.getByTestId('look-try-on').click() // the session already has a women's photo: renders straight away
   await expect(card.locator('[data-render-status=ready]')).toHaveCount(1, { timeout: 20_000 })
   await card.getByTestId('open-viewer').click()
   await expect(w(page, 'viewer')).toBeVisible()
@@ -81,12 +124,12 @@ test('E2E-6 product card "Try on me" opens the widget with that product rendered
   await card.hover()
   await card.getByTestId('try-on-chip').click()
   await expect(w(page, 'elara-panel')).toHaveAttribute('aria-hidden', 'false')
-  await w(page, 'sample-model-w1').click()
-  await expect(w(page, 'photo-ok')).toBeVisible()
-  await w(page, 'photo-continue').click()
-  await expect(w(page, 'viewer')).toBeVisible()
-  await expect(w(page, 'viewer').locator('img[alt^="You wearing"]').first()).toBeVisible({ timeout: 20_000 })
-  await expect(w(page, 'viewer').locator('img[alt^="You wearing"]').first()).toHaveAttribute('alt', new RegExp(title.split(' - ')[0].toLowerCase()))
+  await expect(w(page, 'tryon-sheet')).toBeVisible()
+  await expect(w(page, 'tryon-generate')).toBeDisabled() // an upload needs a photo and consent; a sample model doesn't
+  await w(page, 'tryon-model-w1').click()
+  const img = w(page, 'tryon-result').locator('img[alt^="You wearing"]').first()
+  await expect(img).toBeVisible({ timeout: 20_000 })
+  await expect(img).toHaveAttribute('alt', new RegExp(title.split(' - ')[0].toLowerCase()))
 })
 
 test('E2E-7 "Add look to bag" opens the store cart with the right lines and subtotal', async ({ page, request }) => {
@@ -175,7 +218,7 @@ test('E2E-12 mobile: full-screen panel, pinned composer, no horizontal scroll', 
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
 })
 
-test('W17 Forget me deletes the profile and restarts onboarding', async ({ page, request }) => {
+test('W17 Forget me deletes the profile and starts a fresh chat', async ({ page, request }) => {
   const { sid, token } = await apiSession(request)
   await seedBrowser(page, token, sid)
   await page.goto('/')
@@ -183,7 +226,9 @@ test('W17 Forget me deletes the profile and restarts onboarding', async ({ page,
   await expect(w(page, 'chat')).toBeVisible()
   await w(page, 'forget-me').click()
   await w(page, 'forget-confirm').click()
-  await expect(w(page, 'onboarding-who')).toBeVisible()
+  await expect(w(page, 'toast')).toContainText('deleted')
+  await expect(w(page, 'chat')).toBeVisible()
+  await expect(w(page, 'user-msg')).toHaveCount(0)
   expect(await page.evaluate(() => localStorage.getItem('elara.token'))).not.toBe(token)
   expect((await request.get(`${API}/api/session/${sid}`)).status()).toBe(404)
 })

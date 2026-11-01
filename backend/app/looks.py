@@ -10,14 +10,25 @@ from app.db import ex, new_id, now, q, q1
 NO_PHOTO = "Add a photo to see it on you"
 MINOR = "Try-on is off for under-18s. You can still shop the look."
 NOTHING = "None of these pieces can be tried on yet. Here they are flat."
-TERMINAL = ("ready", "failed")
+MISMATCH = "These pieces are cut for {look}, and your photo is set to {photo}'s clothes. Try them on a {look}'s model."
+TERMINAL = ("ready", "failed", "idle")  # idle: never rendered; looks render only when the shopper taps Try on
 _tasks: set[asyncio.Task] = set()  # strong refs so background renders aren't garbage-collected
 _running: set[str] = set()
 
 
+def piece(pid: str) -> dict | None:
+    """A catalogue product, or one of the shopper's own wardrobe pieces (w_ ids) in the catalogue's shape."""
+    p = catalog.get(pid)
+    if p is None and str(pid).startswith("w_"):
+        from app import tryon  # tryon imports looks
+        w = tryon.wardrobe_item(pid)
+        p = tryon.as_product(w, None) if w else None
+    return p
+
+
 def hydrate(items: list[dict]) -> list[dict]:
-    """[{slot, product_id}] -> [{slot, product}], dropping anything no longer in the catalogue."""
-    return [{"slot": it["slot"], "product": p} for it in items if (p := catalog.get(it["product_id"]))]
+    """[{slot, product_id}] -> [{slot, product}], dropping anything no longer in the catalogue or wardrobe."""
+    return [{"slot": it["slot"], "product": p} for it in items if (p := piece(it["product_id"]))]
 
 
 def _spawn(coro) -> None:
@@ -26,21 +37,21 @@ def _spawn(coro) -> None:
     t.add_done_callback(_tasks.discard)
 
 
-def create_look(session_id, name, why, items, parent_look_id=None, budget_max=None) -> dict:
+def create_look(session_id, name, why, items, parent_look_id=None, budget_max=None, tip=None) -> dict:
     """items: [(slot, product_id)] or [{slot, product_id}]. Unknown ids are dropped (grounding is drop-only)."""
     sess = sessions.get_session(session_id) or {}
     brief = sess.get("brief") or {}
     pairs = [(it["slot"], it["product_id"]) if isinstance(it, dict) else tuple(it) for it in items]
-    stored = [{"slot": s, "product_id": pid} for s, pid in pairs if catalog.get(pid)]
+    stored = [{"slot": s, "product_id": pid} for s, pid in pairs if piece(pid)]
     hyd = hydrate(stored)
     budget = budget_max if budget_max is not None else brief.get("budget_max")
     sc = scoring.score_look(hyd, brief.get("occasion"),
                             dna.taste_vector(sess.get("user_token"), sessions.scope(sess)) if sess else None)
     lid = new_id("lk_")
     ex("insert into looks(id, session_id, name, why, items, total, score, score_reason, parent_look_id, budget_max, "
-       "render_steps_total, created_at) values (?,?,?,?,?,?,?,?,?,?,?,?)", lid, session_id, name, why, stored,
-       sum(it["product"]["price"] for it in hyd), sc["score"], sc["reason"], parent_look_id, budget,
-       len(renders.plan(hyd)), now())
+       "render_status, render_steps_total, tip, created_at) values (?,?,?,?,?,?,?,?,?,?,'idle',?,?,?)", lid, session_id,
+       name, why, stored, sum(it["product"]["price"] for it in hyd), sc["score"], sc["reason"], parent_look_id, budget,
+       len(renders.plan(hyd)), (tip or "").strip() or None, now())
     return look_json(lid)
 
 
@@ -52,17 +63,32 @@ def look_json(look_id: str) -> dict | None:
     ready = lk["render_status"] == "ready"
     budget = lk["budget_max"]
     return {
-        "id": lk["id"], "name": lk["name"], "why": lk["why"], "items": hydrate(lk["items"]), "total": lk["total"],
+        "id": lk["id"], "name": lk["name"], "why": lk["why"], "tip": lk["tip"], "items": hydrate(lk["items"]),
+        "total": lk["total"],
         "currency": "INR", "score": lk["score"], "score_band": scoring.band(lk["score"] or 0),
         "score_reason": lk["score_reason"], "budget_max": budget,
         "over_budget_by": lk["total"] - budget if budget and lk["total"] > budget else None,
-        "parent_look_id": lk["parent_look_id"],
+        "parent_look_id": lk["parent_look_id"], "gender": look_gender(lk["items"]), "model_id": lk["model_id"],
         "render": {"status": lk["render_status"], "image_url": lk["render_url"] if ready else None,
                    "steps_done": lk["render_steps_done"], "steps_total": lk["render_steps_total"],
-                   "cached": bool(lk["render_cached"]), "error": lk["render_error"]},
+                   "cached": bool(lk["render_cached"]), "error": lk["render_error"],
+                   "code": _code(lk) if lk["render_status"] == "failed" else None},
         "video": {"status": lk["video_status"], "url": lk["video_url"] if lk["video_status"] == "ready" else None},
-        "before_url": sess.get("photo_url"),
+        "before_url": (sessions.model(lk["model_id"]) or {}).get("image_url") if lk["model_id"] else sess.get("photo_url"),
     }
+
+
+def look_gender(items: list[dict]) -> str | None:
+    """women | men when the look has gendered pieces (unisex pieces don't count), else None."""
+    gs = {p.get("gender") for it in items or [] if (p := catalog.get(it["product_id"]))} - {"unisex", None}
+    return gs.pop() if len(gs) == 1 else None
+
+
+def _code(lk: dict) -> str | None:
+    """Machine-readable reason a render didn't happen, so the widget can offer the right next step."""
+    e = lk["render_error"] or ""
+    return {NO_PHOTO: "no_photo", MINOR: "minor"}.get(e) or ("gender_mismatch" if e.startswith("These pieces are cut for")
+                                                           else None)
 
 
 def _is_minor(brief: dict) -> bool:
@@ -78,16 +104,25 @@ def _fail(look_id: str, copy: str) -> None:
     ex("update looks set render_status='failed', render_error=? where id=?", copy, look_id)
 
 
-def start_render(look_id: str, memory: bool = True) -> None:
-    """Start (or retry) the look's render as a background task. No-op when ready or already running."""
+def start_render(look_id: str, memory: bool = True, model_id: str | None = None) -> None:
+    """Start (or retry) the look's render as a background task. No-op when ready or already running.
+    model_id renders on that sample model instead of the session photo (e.g. a men's look, a women's photo)."""
     lk = q1("select * from looks where id=?", look_id)
+    if lk and model_id and sessions.model(model_id) and model_id != lk["model_id"]:
+        ex("update looks set model_id=?, render_status='idle', render_url=null, render_key=null where id=?",
+           model_id, look_id)
+        lk = q1("select * from looks where id=?", look_id)
     if not lk or lk["render_status"] == "ready" or look_id in _running:
         return
     sess = sessions.get_session(lk["session_id"]) or {}
     if _is_minor(sess.get("brief") or {}):
         return _fail(look_id, MINOR)
-    if not sess.get("photo_url"):
+    m = sessions.model(lk["model_id"]) if lk["model_id"] else None
+    if not m and not sess.get("photo_url"):
         return _fail(look_id, NO_PHOTO)
+    wear, photo = look_gender(lk["items"]), (m or {}).get("gender") or sessions.photo_gender(sess)
+    if wear and photo and wear != photo:  # never put a women's dress on a men's photo, or the reverse
+        return _fail(look_id, MISMATCH.format(look=wear, photo=photo))
     ex("update looks set render_status='pending', render_error=null, render_steps_done=0 where id=?", look_id)
     _running.add(look_id)
     _spawn(_render(look_id, memory))
@@ -97,14 +132,23 @@ async def _render(look_id: str, memory: bool) -> None:
     try:
         lk = q1("select * from looks where id=?", look_id)
         sess = sessions.get_session(lk["session_id"])
-        src = sessions.src_for(sess["photo_url"], sess["src_url"])
+        if lk["model_id"]:
+            url, key = sessions.model_photo(lk["model_id"])
+            src = sessions.src_for(url, key)
+        else:
+            src = sessions.src_for(sess["photo_url"], sess["src_url"])
         items = hydrate(lk["items"])
         steps = renders.plan(items)
         parent = q1("select * from looks where id=?", lk["parent_look_id"]) if lk["parent_look_id"] else None
         if parent and parent["render_status"] == "ready" and parent["render_key"] \
-                and parent["session_id"] == lk["session_id"] \
-                and (sp := renders.swap_plan(hydrate(parent["items"]), items)):
-            steps, src = sp, youcam.result_src(parent["render_key"], parent["render_url"])
+                and parent["session_id"] == lk["session_id"] and parent["model_id"] == lk["model_id"]:
+            if renders.wearable_same(hydrate(parent["items"]), items):  # only a bag/accessory changed: reuse it
+                ex("update looks set render_status='ready', render_url=?, render_key=?, render_cached=1, "
+                   "render_error=null, render_steps_done=render_steps_total where id=?",
+                   parent["render_url"], parent["render_key"], look_id)
+                return
+            if sp := renders.swap_plan(hydrate(parent["items"]), items):
+                steps, src = sp, youcam.result_src(parent["render_key"], parent["render_url"])
         if not steps:
             return _fail(look_id, NOTHING)
         ex("update looks set render_status='rendering', render_steps_total=?, render_steps_done=0 where id=?",
@@ -149,18 +193,21 @@ async def wait_settled(look_ids: list[str], timeout: float = 75) -> AsyncIterato
 def swap(look_id: str, slot: str, product_id: str) -> dict:
     """A new look with one piece replaced (parent_look_id set) and a swap-mode render started."""
     lk = q1("select * from looks where id=?", look_id)
-    new = catalog.get(product_id)
+    new = piece(product_id)  # a store product, or one of the shopper's own wardrobe pieces
     if not lk or not new:
         raise KeyError("look or product not found")
     drop = {slot} | ({"top", "bottom"} if slot == "one_piece" else {"one_piece"} if slot in ("top", "bottom") else set())
     old = next((it for it in hydrate(lk["items"]) if it["slot"] == slot), None)
     items = [(it["slot"], it["product_id"]) for it in lk["items"] if it["slot"] not in drop] + [(slot, product_id)]
     child = create_look(lk["session_id"], lk["name"], lk["why"], items, parent_look_id=look_id,
-                        budget_max=lk["budget_max"])
+                        budget_max=lk["budget_max"], tip=lk["tip"])
     sess = sessions.get_session(lk["session_id"]) or {}
     if old:
         dna.record_swap(sess.get("user_token"), old["product"], new, sessions.scope(sess))
-    start_render(child["id"])
+    if lk["model_id"]:
+        ex("update looks set model_id=? where id=?", lk["model_id"], child["id"])
+    if lk["render_status"] != "idle":  # the shopper was already seeing it on; keep it on
+        start_render(child["id"])
     return look_json(child["id"])
 
 

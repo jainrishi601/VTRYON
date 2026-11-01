@@ -88,10 +88,27 @@ The `message` text streams as `text` before the cards.
 
 ### `ask_clarification` (terminal)
 ```json
-{ "question": "one sentence", "chips": ["Women", "Men", "Show me both"] }
+{ "questions": [ { "field": "gender", "question": "Should I shop women's or men's?",
+                   "options": [ {"label": "Women", "value": "women"}, {"label": "Men", "value": "men"} ] } ] }
 ```
-- 2–4 chips.
+- 1–2 questions on one card, 2–4 options each. `field` is `wearer | gender | occasion | budget`; option values are machine values (gender `women|men|both`, budget rupees or `none`, wearer `self` or a relation).
+- The widget sends the picks back as `answers`, which go straight into the brief.
 - Emits SSE `clarify`. The turn ends.
+
+### `present_products` (terminal)
+```json
+{ "message": "one sentence", "product_refs": ["c_3", "c_7", "c_9", "c_12"],
+  "wearer": { "for": "self", "relation": "", "gender": "men", "occasion": "" } }
+```
+- For a request for a kind of piece ("casual shirts", "show me pants"), not an outfit. 4–8 refs, best first.
+- Validated like looks: refs from this turn, wearer gender, never list. Emits SSE `products`.
+
+### `tip` and `try_next`
+- Each look in `present_looks` carries a `tip`: one line finishing it with something the store doesn't sell (own sandals, jewellery, hair), or "". Shown as "Finish it" under "Why this works".
+- Both present tools carry `try_next`: two follow-ups in the shopper's voice, specific to what was shown ("Shorts instead of trousers in look 1"). Emitted as SSE `suggest`; tapping one sends it.
+
+### `wearer` (on `present_looks` and `present_products`)
+Who Claude is dressing, as it understands it now: `for` (`self|other|unknown`), `relation`, `gender` (`women|men|unknown`), `occasion`. Code saves it to the brief before validating, so the turn's gender check, later turns, swaps and try-ons all use it. The shopper's own gender is kept when a gift recipient is set.
 
 ### `remember_preference`
 ```json
@@ -110,17 +127,23 @@ The `message` text streams as `text` before the cards.
 
 **Clarifying**
 
-3. **Clarifier: at most one question per turn**, and only when a required field is missing:
+3b. **Every new request asks first.** A new occasion, kind of piece or person gets one card of 1–2 questions before anything is shown: gender if unsettled, a budget (per look, or per piece for a product grid), or the one detail that sharpens it (dress code, vibe, fit, sleeve). Refinements and questions get no card. `present_looks` / `present_products` carry `request: new | new_fully_specified | refinement`; the loop sends back a `new` answer that skipped the card (`ASK_FIRST`), so Claude asks. Product requests show a grid; occasions show 2–3 complete looks.
+
+3a. **Basics before the first looks of every chat.** Before the first looks or products in a chat, Ava settles the wearer's gender (and who it's for if unclear), the occasion for an outfit, and a budget. A basic counts only if the shopper said it in this chat, answered it on a card in this chat, or the message makes it obvious ("for my brother", "under ₹5,000"). Values carried over from an earlier chat are shown to Claude as "remembered, NOT confirmed" and are asked again with the remembered value as the first option. Follow-ups in the same chat don't re-ask. The server tracks this in `sessions.confirmed` (answers, `wearer`, and the onboarding form mark fields confirmed; a new chat starts empty).
+
+3. **Clarifier: at most one card per turn, with at most two questions**, and only for fields that are missing:
 
 | Missing | Ask? | Chips |
 |---|---|---|
-| occasion | yes | Beach · Wedding · Office · Date · Everyday |
-| gender (self), multi-gender store, not inferable | yes | Women · Men · Show me both |
+| gender (self), multi-gender store, not inferable | yes, first | Women · Men · Show me both |
+| occasion, when the shopper wants an outfit | yes | Beach · Wedding · Office · Date night |
+| occasion, for a product request ("show me shirts") | no | — |
+| who it's for, when ambiguous | yes | For me · For them |
 | gender (recipient) when relation implies it | **never** | — |
 | budget | only if phrasing implies a cap without a number ("cheap", "not too pricey") | Under ₹2k · ₹2–4k · ₹4–8k · No limit |
 | anything else | no | — |
 
-   If two fields are missing, ask the one that changes the catalogue filter most: gender before budget.
+   If two are missing, ask both on the same card, most important first (gender, then occasion, then budget). Never a third, and never a question the table doesn't call for. Without Claude, the fallback asks gender and occasion with the same card instead of guessing.
 
 4. **Recipient inference.** Claude infers recipient gender from relation words and pronouns (brother, boyfriend, dad → men; sister, girlfriend, mum → women). When shopping for someone else, every pronoun refers to the recipient ("for him").
 
