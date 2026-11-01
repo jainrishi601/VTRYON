@@ -1,0 +1,6 @@
+[
+  {"id": "w1", "gender": "women", "label": "Model 1 · deep-medium skin, curly hair", "file": "w1.jpg", "source_url": "https://plugins-media.makeupar.com/strapi/assets/clothes_03_cccd5d4803.jpeg", "licence": "YouCam (Perfect Corp.) documented demo asset; cropped from 1024x1024 to 680x1024 portrait", "photographer": "Perfect Corp. / YouCam sample"},
+  {"id": "w2", "gender": "women", "label": "Model 2 · light skin, long dark hair", "file": "w2.jpg", "source_url": "https://unsplash.com/photos/woman-in-a-strapless-top-and-black-pants-GsBSWTCP9UM", "licence": "Unsplash License (free commercial use)", "photographer": "Zaven Baghdasaryan (@zmicaphoto)"},
+  {"id": "m1", "gender": "men", "label": "Model 3 · medium-brown skin, South Asian", "file": "m1.jpg", "source_url": "https://unsplash.com/photos/a-man-standing-with-his-hands-in-his-pockets-NgjJZ31c9_I", "licence": "Unsplash License (free commercial use)", "photographer": "Design Wala (@designwala)"},
+  {"id": "m2", "gender": "men", "label": "Model 4 · light skin, hair tied back", "file": "m2.jpg", "source_url": "https://unsplash.com/photos/1_19E6-l9ng", "licence": "Unsplash License (free commercial use)", "photographer": "Minimalism (@minimalism_brand)"}
+]

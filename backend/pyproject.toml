@@ -1,0 +1,34 @@
+[project]
+name = "elara-backend"
+version = "0.1.0"
+description = "Elara Commerce: agentic virtual try-on widget backend"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "httpx",
+    "pydantic>=2",
+    "python-multipart",
+    "pillow",
+    "anthropic",
+    "pyyaml",
+]
+
+[dependency-groups]
+dev = ["pytest", "pytest-asyncio", "ruff"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = ["live: spends real YouCam units; skipped by default"]
+addopts = "-m 'not live'"
+
+[tool.ruff]
+line-length = 120
+extend-exclude = ["var"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501", "B008"]

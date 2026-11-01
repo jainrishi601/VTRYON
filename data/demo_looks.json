@@ -1,0 +1,210 @@
+[
+  {
+    "id": "demo-01",
+    "occasion": "beach",
+    "gender": "women",
+    "name": "Olive Shore",
+    "items": [
+      {
+        "slot": "top",
+        "product_id": "nl-0099"
+      },
+      {
+        "slot": "bottom",
+        "product_id": "nl-0125"
+      }
+    ],
+    "total": 5250,
+    "why": "An olive racerback over loose ivory pants keeps you cool on the sand, and the earthy pairing stays easy all day."
+  },
+  {
+    "id": "demo-02",
+    "occasion": "beach",
+    "gender": "women",
+    "name": "Cherry Sands",
+    "items": [
+      {
+        "slot": "top",
+        "product_id": "nl-0002"
+      },
+      {
+        "slot": "bottom",
+        "product_id": "nl-0157"
+      }
+    ],
+    "total": 6800,
+    "why": "You get a bold red top against clean white wide pants, so the look feels bright without trying too hard."
+  },
+  {
+    "id": "demo-03",
+    "occasion": "beach",
+    "gender": "women",
+    "name": "Berry Breeze",
+    "items": [
+      {
+        "slot": "one_piece",
+        "product_id": "nl-0206"
+      }
+    ],
+    "total": 4700,
+    "why": "One easy berry dress is all you need for the beach: light, loose, and ready the moment you are."
+  },
+  {
+    "id": "demo-04",
+    "occasion": "beach",
+    "gender": "women",
+    "name": "Blush Polka",
+    "items": [
+      {
+        "slot": "top",
+        "product_id": "nl-0009"
+      },
+      {
+        "slot": "bottom",
+        "product_id": "nl-0144"
+      }
+    ],
+    "total": 6200,
+    "why": "A soft blush tee balances the playful navy polka culottes, giving you a relaxed look that photographs well."
+  },
+  {
+    "id": "demo-05",
+    "occasion": "college farewell",
+    "gender": "men",
+    "name": "Crisp Contrast",
+    "items": [
+      {
+        "slot": "top",
+        "product_id": "nl-0294"
+      },
+      {
+        "slot": "bottom",
+        "product_id": "nl-0456"
+      }
+    ],
+    "total": 9700,
+    "why": "A crisp ivory shirt with slim navy chinos gives you a sharp, clean silhouette that suits every farewell photo."
+  },
+  {
+    "id": "demo-06",
+    "occasion": "college farewell",
+    "gender": "men",
+    "name": "Warm Neutral",
+    "items": [
+      {
+        "slot": "top",
+        "product_id": "nl-0377"
+      },
+      {
+        "slot": "bottom",
+        "product_id": "nl-0451"
+      }
+    ],
+    "total": 8650,
+    "why": "You keep it warm and tonal: an oak shirt over white pants reads polished but never stiff."
+  },
+  {
+    "id": "demo-07",
+    "occasion": "college farewell",
+    "gender": "men",
+    "name": "Checkmate Polish",
+    "items": [
+      {
+        "slot": "top",
+        "product_id": "nl-0392"
+      },
+      {
+        "slot": "bottom",
+        "product_id": "nl-0455"
+      },
+      {
+        "slot": "layer",
+        "product_id": "nl-0470"
+      }
+    ],
+    "total": 17600,
+    "why": "A white shirt and black chinos form your base, and the check overshirt adds the layer that makes it a look."
+  },
+  {
+    "id": "demo-08",
+    "occasion": "college farewell",
+    "gender": "men",
+    "name": "Earthy Polo",
+    "items": [
+      {
+        "slot": "top",
+        "product_id": "nl-0295"
+      },
+      {
+        "slot": "bottom",
+        "product_id": "nl-0465"
+      }
+    ],
+    "total": 8500,
+    "why": "A rust knit polo with brown trousers gives you a smart, earthy palette that feels grown up yet relaxed."
+  },
+  {
+    "id": "demo-09",
+    "occasion": "office",
+    "gender": "women",
+    "name": "Crisp Gingham",
+    "items": [
+      {
+        "slot": "top",
+        "product_id": "nl-0054"
+      },
+      {
+        "slot": "bottom",
+        "product_id": "nl-0125"
+      }
+    ],
+    "total": 8000,
+    "why": "A gingham necktie blouse over ivory pants keeps you crisp in meetings while the soft tie adds character."
+  },
+  {
+    "id": "demo-10",
+    "occasion": "office",
+    "gender": "women",
+    "name": "Ink Hour",
+    "items": [
+      {
+        "slot": "one_piece",
+        "product_id": "nl-0185"
+      }
+    ],
+    "total": 6750,
+    "why": "One ink-blue layered dress does all the work, so you look composed from the first meeting to the last."
+  },
+  {
+    "id": "demo-11",
+    "occasion": "date night",
+    "gender": "women",
+    "name": "Rose Noir",
+    "items": [
+      {
+        "slot": "one_piece",
+        "product_id": "nl-0215"
+      }
+    ],
+    "total": 7100,
+    "why": "A black dress scattered with red blooms gives you quiet drama for dinner, romantic without feeling overdone."
+  },
+  {
+    "id": "demo-12",
+    "occasion": "date night",
+    "gender": "men",
+    "name": "Midnight Grey",
+    "items": [
+      {
+        "slot": "top",
+        "product_id": "nl-0362"
+      },
+      {
+        "slot": "bottom",
+        "product_id": "nl-0416"
+      }
+    ],
+    "total": 9950,
+    "why": "A black pocket shirt with soft grey trousers keeps you sleek and understated for a dinner date."
+  }
+]
