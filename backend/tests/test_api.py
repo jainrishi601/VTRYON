@@ -120,3 +120,13 @@ def test_admin_and_dna_endpoints(c):
     assert c.get(f"/api/dna/{tok}").json()["edges"]
     assert c.delete(f"/api/dna/{tok}").json() == {"ok": True}
     assert c.get(f"/api/dna/{tok}").json()["edges"] == [] and c.get(f"/api/session/{sid}").status_code == 404
+
+
+def test_new_chat_does_not_inherit_gift_recipient():
+    from app.sessions import _carry
+    gift = {"for": "other", "gender": "women", "occasion": "Office", "budget_max": 3000,
+            "recipient": {"relation": "brother", "gender": "men"}}
+    out = _carry(gift)
+    assert out["for"] == "self" and "recipient" not in out and "gender" not in out
+    assert out["occasion"] == "Office" and out["budget_max"] == 3000
+    assert _carry({"for": "self", "gender": "women"})["gender"] == "women"

@@ -100,7 +100,7 @@ async def run_turn(sid: str, text: str, look_id: str | None, attachment: str | N
     return {
         "events": evs, "text": "".join(d["delta"] for e, d, _ in evs if e == "text"),
         "looks": [final_looks[x["id"]] for x in lk["looks"]] if lk else [],
-        "clarifies": [d for e, d, _ in evs if e == "clarify"],
+        "clarifies": [_card(d) for e, d, _ in evs if e == "clarify"],
         "errors": [d for e, d, _ in evs if e == "error"],
         "t_first": first("status"), "t_text": first("text"), "t_looks": first("looks"), "t_total": time.monotonic() - t0,
         "trace": list(loop.TRACES.get(sid, [])),
@@ -108,6 +108,16 @@ async def run_turn(sid: str, text: str, look_id: str | None, attachment: str | N
 
 
 # ---------- assertions ----------
+
+def _card(d: dict) -> dict:
+    """The question card ({questions:[{question, options:[{label}]}]}) as one {question, chips} for the checks."""
+    if "questions" not in d:
+        return d
+    qs = d["questions"]
+    return {"question": " / ".join(q["question"] for q in qs),
+            "chips": [o["label"] for q in qs for o in q.get("options") or []],
+            "fields": [q.get("field") for q in qs]}
+
 
 def mean_formality(lk: dict) -> float:
     f = [it["product"]["formality"] for it in lk["items"]]

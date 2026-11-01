@@ -351,11 +351,19 @@ function ClarifyCard({ card, onDone }: { card: Clarify; onDone: (text: string, a
     const labels = ps.flatMap((p) => (p ? [p.label] : []))
     onDone(labels.length ? labels.join(' · ') : 'Skip the questions, just show me something', answers)
   }
+  // Show the pick for a beat before moving on, and ignore clicks meanwhile: without it a double-click (or a
+  // double-tap on a phone) silently answered the NEXT question with whatever option sat under the cursor.
+  const busy = useRef(false)
   const choose = (p: { label: string; value: string } | null) => {
+    if (busy.current) return
+    busy.current = true
     const next = picks.map((x, k) => (k === i ? p : x))
     setPicks(next); setOther(false); setTxt('')
-    if (i < n - 1) setI(i + 1)
-    else finish(next)
+    setTimeout(() => {
+      busy.current = false
+      if (i < n - 1) setI(i + 1)
+      else finish(next)
+    }, 260)
   }
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
@@ -378,10 +386,10 @@ function ClarifyCard({ card, onDone }: { card: Clarify; onDone: (text: string, a
             </span>
           )}
         </div>
-        <div className="p-1.5">
+        <div className="p-1.5 fade-in" key={i}>
           {q.options.map((o, k) => (
             <button key={o.value + k} data-testid="clarify-option" onClick={() => choose(o)}
-              className={`w-full h-12 px-2.5 rounded-xl flex items-center gap-3 text-[15px] text-left transition-colors hover:bg-surface ${picks[i]?.value === o.value ? 'bg-surface' : ''}`}>
+              className={`w-full h-12 px-2.5 rounded-xl flex items-center gap-3 text-[15px] text-left transition-colors hover:bg-surface ${picks[i]?.value === o.value ? 'bg-surface ring-1 ring-ink' : ''}`}>
               <span className="num w-7 h-7 rounded-full bg-surface text-[12px] text-muted inline-flex items-center justify-center shrink-0">{k + 1}</span>
               {o.label}
             </button>

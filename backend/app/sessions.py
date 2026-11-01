@@ -188,8 +188,9 @@ def create(user_token: str | None = None, store_id="northline") -> tuple[dict, b
     token = user_token or secrets.token_urlsafe(18)[:24]
     last = q1("select * from sessions where user_token=? order by created_at desc limit 1", token)
     sid = new_id("s_", 16)
+    carried = _carry(last and last["brief"])
     ex("insert into sessions(id, user_token, store_id, brief, photo_url, src_url, sample_model_id, photo_gender, "
-       "created_at) values (?,?,?,?,?,?,?,?,?)", sid, token, store_id, last and last["brief"],
+       "created_at) values (?,?,?,?,?,?,?,?,?)", sid, token, store_id, carried,
        last and last["photo_url"], last and last["src_url"], last and last["sample_model_id"],
        last and last.get("photo_gender"), now())
     _seed_from_tryon(sid, token)
@@ -199,6 +200,19 @@ def create(user_token: str | None = None, store_id="northline") -> tuple[dict, b
         profile = {"brief": last["brief"], "dna": dna.summary(token, scope(last)),
                    "last_occasion": (last["brief"] or {}).get("occasion")}
     return get_session(sid), returning, profile
+
+
+def _carry(brief: dict | None) -> dict | None:
+    """What a new chat inherits from the last one. Who it's for is per chat: a gift for a brother must not make
+    the next chat ("mens linen shirt for office") about the brother too. The shopper's own gender only carries
+    when the last chat was for themselves; occasion and budget carry as unconfirmed hints."""
+    if not brief:
+        return brief
+    out = {k: v for k, v in brief.items() if k not in ("for", "recipient", "gender")}
+    out["for"] = "self"
+    if brief.get("for") != "other" and brief.get("gender"):
+        out["gender"] = brief["gender"]
+    return out
 
 
 def _seed_from_tryon(sid: str, token: str) -> None:

@@ -62,8 +62,9 @@ men). A value marked "remembered from an earlier chat, NOT confirmed" is not set
 remembered value as the first option.
 2. For an outfit with no occasion: the occasion.
 3. A budget, unless this message states one. Per look for outfits, per piece for a product request. \
-Options: Under ₹3,000 (3000), ₹3,000–6,000 (6000), ₹6,000–10,000 (10000), No limit (none); for single \
-pieces you may use lower bands (Under ₹2,000, ₹2,000–4,000, ₹4,000–7,000, No limit).
+Options: Under ₹6,000 (6000), ₹6,000–9,000 (9000), ₹9,000–14,000 (14000), No limit (none) — the \
+cheapest complete outfit here is about ₹4,300 (women) / ₹5,800 (men), so never offer a band below that; for \
+single pieces use Under ₹3,000, ₹3,000–5,000, ₹5,000–8,000, No limit.
 4. The one detail that sharpens THIS request (field style, fit or detail): the dress code for office \
 (Formal / Smart casual / Creative), the vibe for an event (Classic / Bold / Boho / Minimal), the fit for \
 trousers or shirts (Relaxed / Regular / Fitted), sleeve length or colour family for shirts. Use it \

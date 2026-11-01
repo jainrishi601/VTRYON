@@ -276,17 +276,21 @@ async def _claude(t: context.Turn, out: Out) -> AsyncIterator[Event]:
         rnd += 1
         final = None
         text_before = len(out.text)
+        held: list[Event] = []  # this round's prose: shown only if the round is a plain answer (no tool call)
         try:
             async for ev in _call(messages, out, first):
                 if ev[0] == "final":
                     final = ev[1]
+                elif ev[0] == "text":
+                    held.append(ev)
                 else:
                     yield ev
         except (anthropic.APIError, TimeoutError) as e:
             failures += 1
             t.trace.append({"call_error": repr(e)})
-            if failures >= 2 or len(out.text) > text_before:
+            if failures >= 2:
                 raise
+            out.text = out.text[:text_before]  # held text was never shown, so a clean retry is safe
             rnd -= 1
             continue
         t.trace.append({"round": rnd, "stop": final.stop_reason, "usage": {
@@ -295,6 +299,11 @@ async def _claude(t: context.Turn, out: Out) -> AsyncIterator[Event]:
         if final.stop_reason == "refusal":
             raise RuntimeError("refusal")
         uses = [b for b in final.content if b.type == "tool_use"]
+        if uses:  # prose next to a tool call is the model thinking aloud ("Retry broader."): never show it
+            out.text = out.text[:text_before]
+        else:
+            for ev in held:
+                yield ev
         if not uses:
             if not out.text.strip():
                 raise RuntimeError("empty reply")

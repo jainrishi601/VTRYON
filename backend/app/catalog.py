@@ -11,7 +11,17 @@ def load(path=None) -> None:
     p = path or config.DATA_DIR / "products.json"
     PRODUCTS.clear()
     if p.exists():
-        PRODUCTS.update({r["id"]: r for r in json.loads(p.read_text())})
+        PRODUCTS.update({r["id"]: _sized(r) for r in json.loads(p.read_text())})
+
+
+def _sized(r: dict) -> dict:
+    """Display images at 800px from the Shopify CDN (~3x lighter; grids load dozens). vto_ref_url stays full-res
+    because YouCam renders from it."""
+    for k in ("image_url", "image_url_alt"):
+        u = r.get(k)
+        if u and "cdn.shopify.com" in u and "width=" not in u:
+            r[k] = u + ("&" if "?" in u else "?") + "width=800"
+    return r
 
 
 def get(pid: str) -> dict | None:
