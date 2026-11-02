@@ -37,7 +37,7 @@ export const TERMINAL = new Set(['ready', 'failed', 'idle'])
 export const mismatch = (l: Look | { gender: string | null; model_id?: string | null }, s: Session | null) =>
   !!(l.gender && !l.model_id && s?.photo_gender && s.photo_gender !== l.gender)
 
-// Bridge for the non-React entry points (window.Elara, URL params, [data-elara-tryon]).
+// Bridge for the non-React entry points (window.Drape, URL params, [data-drape-tryon]).
 const queue: (ElaraOpenOptions | undefined)[] = []
 export const controller: { open: (o?: ElaraOpenOptions) => void; close: () => void; isOpen: () => boolean } = {
   open: (o) => { queue.push(o) }, close: () => {}, isOpen: () => false,
@@ -334,8 +334,8 @@ function useElaraState(cfg: Cfg) {
   const addToCart = useCallback(async (items: CartItem[], lookId?: string) => {
     if (cfg.cartAdapter === 'shopify') {
       await fetch('/cart/add.js', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: items.map((i) => ({ id: i.product_id, quantity: 1, properties: { _styled_with: 'Ava' } })) }) }).catch(() => {})
-    } else if (typeof window.elaraAddToCart === 'function') {
-      window.elaraAddToCart(items)
+    } else if (typeof window.drapeAddToCart === 'function') {
+      window.drapeAddToCart(items)
     }
     setBagBump((b) => b + 1)
     showToast(`${items.length} ${items.length === 1 ? 'item' : 'items'} added to your bag`)

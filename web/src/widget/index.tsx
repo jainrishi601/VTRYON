@@ -4,7 +4,7 @@ import { setBase, ls } from './api'
 import { ElaraProvider, controller, type Cfg } from './state'
 import { Launcher, Panel } from './Panel'
 
-// Elara Commerce widget: one <script> tag, mounted in a Shadow DOM so host CSS and ours never meet.
+// Drape widget: one <script> tag, mounted in a Shadow DOM so host CSS and ours never meet.
 // currentScript is only set while this file first executes, so capture it now.
 const script = (document.currentScript as HTMLScriptElement | null) ?? window.__ELARA_SCRIPT__ ?? document.querySelector<HTMLScriptElement>('script[src*="widget.js"]')
 
@@ -53,15 +53,15 @@ function mount() {
     </ElaraProvider>,
   )
 
-  window.Elara = { open: (o) => controller.open(o), close: () => controller.close(), isOpen: () => controller.isOpen() }
+  window.Drape = { open: (o) => controller.open(o), close: () => controller.close(), isOpen: () => controller.isOpen() }
 
-  // Any element with data-elara-tryon="<productId>" becomes a try-on trigger.
+  // Any element with data-drape-tryon="<productId>" becomes a try-on trigger.
   document.addEventListener('click', (ev) => {
-    const el = (ev.target as Element | null)?.closest?.('[data-elara-tryon]')
+    const el = (ev.target as Element | null)?.closest?.('[data-drape-tryon]')
     if (!el) return
     ev.preventDefault()
     ev.stopPropagation()
-    controller.open({ productId: el.getAttribute('data-elara-tryon') ?? undefined })
+    controller.open({ productId: el.getAttribute('data-drape-tryon') ?? undefined })
   }, true)
 
   if (crew) controller.open({ tab: 'crew' })

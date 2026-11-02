@@ -308,7 +308,7 @@ Without `ANTHROPIC_API_KEY`, or when Claude fails twice, `agent/fallback.py` com
 - **Theming:** it reads `--brand-primary` / `--brand-font` from the host `:root` if present.
 - **Cart adapter `custom`:** it calls `window.elaraAddToCart(items)` and the store opens its drawer. `shopify` posts to `/cart/add.js`.
 - **Entry points:**
-  - `window.Elara.open({tab?, productId?})`
+  - `window.Drape.open({tab?, productId?})`
   - `?crew=<id>` opens the Crew view
   - `?look=<id>` opens that look
   - elements with `[data-elara-tryon="<productId>"]` get a click handler

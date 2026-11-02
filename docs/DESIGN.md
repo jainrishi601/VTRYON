@@ -19,7 +19,7 @@
 > The tokens below describe the store pages.
 
 Store: **Northline** (fictional resort/contemporary label; no third-party brand anywhere on screen).
-Stylist name inside the widget: **Ava**. Product name: **Elara Commerce**.
+Stylist name inside the widget: **Ava**. Product name: **Drape** (renamed from Elara Commerce, 11-01).
 
 Where this doc and the PRD disagree, the PRD wins. Known overrides are marked **[PRD]**.
 

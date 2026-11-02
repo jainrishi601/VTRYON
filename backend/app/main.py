@@ -25,7 +25,7 @@ async def lifespan(_app):
     yield
 
 
-app = FastAPI(title="Elara Commerce", lifespan=lifespan)
+app = FastAPI(title="Drape", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
@@ -431,7 +431,7 @@ async def admin_renders_html():
         f"<td>{_thumb(r)}</td></tr>"
         for r in d["renders"])
     return f"""<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
-<title>YouCam renders · Elara</title>
+<title>YouCam renders · Drape</title>
 <style>body{{font:14px/1.4 -apple-system,Helvetica,sans-serif;color:#111;margin:32px;background:#fff}}
 h1{{font:400 40px Georgia,serif;margin:0 0 8px}}.k{{display:flex;gap:16px;margin:16px 0 24px;flex-wrap:wrap}}
 .k div{{background:#F6F4F0;border-radius:14px;padding:16px 20px;min-width:140px}}.k b{{display:block;font-size:28px;

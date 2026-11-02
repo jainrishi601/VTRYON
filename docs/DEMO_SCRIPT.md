@@ -13,7 +13,7 @@
 **0:00–0:12 · Hook**
 - Shot: the Northline home page, then a hover over a product, then a cut to a phone WhatsApp screenshot: "does this look ok on me??"
 - VO: "Online fashion still asks you to imagine. We built a stylist that shows you instead — on any store, with one script tag."
-- Caption: Elara Commerce · YouCam eCommerce VTO Hackathon
+- Caption: Drape · YouCam eCommerce VTO Hackathon
 
 **0:12–0:30 · Onboarding**
 - Shot: click "Style me". Screen 1: Me · Beach trip · budget slider. Screen 2: upload a full-body photo.
@@ -57,7 +57,7 @@
 
 **2:40–2:45 · Close**
 - Shot: the /merchant page with the embed snippet and feed JSON; the repo URL.
-- VO: "One script tag, any catalogue. Elara Commerce."
+- VO: "One script tag, any catalogue. Drape."
 - Caption: github.com/… · built with YouCam API
 
 ## Scripted prompts (also on /judge)

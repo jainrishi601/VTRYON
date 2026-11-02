@@ -36,7 +36,7 @@ export function Stylist({ me }: { me: User }) {
       { ms: 6000, onExpire: () => cartActions.close() })
   }, [lines.length])
 
-  const ask = (message: string) => { if (message.trim()) window.Elara?.open({ message: message.trim() }) }
+  const ask = (message: string) => { if (message.trim()) window.Drape?.open({ message: message.trim() }) }
   const ideas = [...occ.slice(0, 2).map((o) => `Looks for the ${o.toLowerCase()}`), 'Build a look around my ivory palazzos', 'Smart casual for the office', 'Something for a wedding'].slice(0, 4)
   return (
     <div className="px-5 sm:px-10 xl:px-14 py-8 sm:py-12 max-w-[1280px] mx-auto" data-testid="stylist-page">
@@ -67,7 +67,7 @@ export function Stylist({ me }: { me: User }) {
               const store = l.items.filter((it) => !it.product.owned)
               return (
                 <article key={l.id} className="flex flex-col t-fade" data-testid="stylist-look">
-                  <button onClick={() => window.Elara?.open({ lookId: l.id })} className="relative aspect-[4/5] bg-surface overflow-hidden text-left group" aria-label={`Open ${l.name}`}>
+                  <button onClick={() => window.Drape?.open({ lookId: l.id })} className="relative aspect-[4/5] bg-surface overflow-hidden text-left group" aria-label={`Open ${l.name}`}>
                     {l.render.status === 'ready' && l.render.image_url ? (
                       <><img src={l.render.image_url} alt={`You wearing ${l.name}`} className="absolute inset-0 w-full h-full object-contain" loading="lazy" /><span className="absolute top-3 left-3"><Tag>On you</Tag></span></>
                     ) : (
@@ -82,7 +82,7 @@ export function Stylist({ me }: { me: User }) {
                       <p className="font-serif text-[24px] leading-tight truncate">{l.name}</p>
                       <p className="mt-0.5 text-[13px] text-muted"><span className="num text-ink">{inr(l.total)}</span> · {plural(store.length, 'store piece')}{l.items.length > store.length ? ` + ${l.items.length - store.length} yours` : ''}</p>
                     </div>
-                    <button onClick={() => window.Elara?.open({ lookId: l.id })} className="h-10 px-4 rounded-full border border-line hover:border-ink text-[13px] font-medium inline-flex items-center gap-1.5 transition-colors duration-150">Open<ArrowUpRight size={14} /></button>
+                    <button onClick={() => window.Drape?.open({ lookId: l.id })} className="h-10 px-4 rounded-full border border-line hover:border-ink text-[13px] font-medium inline-flex items-center gap-1.5 transition-colors duration-150">Open<ArrowUpRight size={14} /></button>
                   </div>
                 </article>
               )

@@ -99,5 +99,5 @@ export interface CrewLook {
 }
 export interface Crew { id: string; name: string; occasion: string; share_url: string; members: Member[]; looks: CrewLook[]; comments: Comment[]; updated_at: string }
 
-/** Item handed to the host store's cart adapter (window.elaraAddToCart). */
+/** Item handed to the host store's cart adapter (window.drapeAddToCart). */
 export interface CartItem { product_id: string; title: string; price: number; image_url: string; size?: string; look_name?: string; styled_with?: string; crew_verdict?: string }

@@ -57,16 +57,16 @@ export const cartActions = {
   add(items: CartItem[]) {
     cart = [...cart, ...items.map((i, n) => ({ ...i, key: `${i.product_id}-${Date.now()}-${n}` }))]
     drawerOpen = true
-    window.Elara?.close()
+    window.Drape?.close()
     emit()
   },
   remove(key: string) { cart = cart.filter((l) => l.key !== key); emit() },
-  open() { drawerOpen = true; window.Elara?.close(); emit() },
+  open() { drawerOpen = true; window.Drape?.close(); emit() },
   close() { drawerOpen = false; emit() },
 }
 // The custom cart adapter the widget calls (data-cart-adapter="custom").
-window.elaraAddToCart = (items) => cartActions.add(items)
+window.drapeAddToCart = (items) => cartActions.add(items)
 // Widget and drawer share the right slot: opening one closes the other.
 window.addEventListener('elara:open', () => { if (drawerOpen) cartActions.close() })
 
-export const openStylist = (o?: Parameters<NonNullable<Window['Elara']>['open']>[0]) => window.Elara?.open(o)
+export const openStylist = (o?: Parameters<NonNullable<Window['Drape']>['open']>[0]) => window.Drape?.open(o)

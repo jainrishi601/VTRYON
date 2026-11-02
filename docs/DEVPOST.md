@@ -1,6 +1,6 @@
 # Devpost submission (draft, under 400 words)
 
-**Name:** Elara Commerce
+**Name:** Drape
 
 **Tagline:** An agentic AI stylist for any fashion store. Describe the occasion, see complete outfits on you, swap any piece, and shop it with your crew.
 

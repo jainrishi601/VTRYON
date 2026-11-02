@@ -126,9 +126,9 @@ export function Judge() {
   )
 }
 
-const EMBED = `<script src="https://cdn.elara.shop/widget.js"
+const EMBED = `<script src="https://cdn.drape.style/widget.js"
   data-store-id="northline"
-  data-api="https://api.elara.shop"
+  data-api="https://api.drape.style"
   data-position="bottom-center"
   data-cart-adapter="shopify"></script>`
 
@@ -150,11 +150,11 @@ const HOOKS = `/* optional: match your brand */
 :root { --brand-primary: #111111; --brand-font: "Your Sans"; }
 
 <!-- optional: a try-on chip on any element -->
-<button data-elara-tryon="nl-0042">Try on me</button>
+<button data-drape-tryon="nl-0042">Try on me</button>
 
 // optional: open from your own UI
-window.Elara.open({ tab: "chat" })
-window.Elara.open({ productId: "nl-0042" })`
+window.Drape.open({ tab: "chat" })
+window.Drape.open({ productId: "nl-0042" })`
 
 export function Merchant() {
   return (
@@ -162,13 +162,13 @@ export function Merchant() {
       <p className="label text-accent">For merchants</p>
       <h1 className="font-serif text-[56px] md:text-[88px] leading-[0.95] mt-4 max-w-[900px]">One script tag. Your whole catalogue, styled.</h1>
       <p className="mt-6 text-[17px] leading-[28px] text-muted max-w-[640px]">
-        Elara adds an AI stylist with virtual try-on to any fashion store. It runs in a sealed Shadow DOM, so your CSS never breaks it and it never breaks yours. This store embeds it exactly like this.
+        Drape adds an AI stylist with virtual try-on to any fashion store. It runs in a sealed Shadow DOM, so your CSS never breaks it and it never breaks yours. This store embeds it exactly like this.
       </p>
       <div className="mt-16 grid md:grid-cols-[1fr_1.4fr] gap-10 items-start [&>*]:min-w-0">
         <div>
           <p className="label text-muted">Step 1</p>
           <h2 className="font-serif text-[36px] leading-tight mt-2">Paste the tag before &lt;/body&gt;</h2>
-          <p className="mt-4 text-[15px] leading-[26px] text-muted">The launcher, the product-card chip and the full stylist panel mount themselves. <code className="text-ink">data-cart-adapter</code> is <code className="text-ink">shopify</code> (posts to <code className="text-ink">/cart/add.js</code>) or <code className="text-ink">custom</code> (calls <code className="text-ink">window.elaraAddToCart(items)</code>).</p>
+          <p className="mt-4 text-[15px] leading-[26px] text-muted">The launcher, the product-card chip and the full stylist panel mount themselves. <code className="text-ink">data-cart-adapter</code> is <code className="text-ink">shopify</code> (posts to <code className="text-ink">/cart/add.js</code>) or <code className="text-ink">custom</code> (calls <code className="text-ink">window.drapeAddToCart(items)</code>).</p>
         </div>
         <CopyBlock label="index.html" code={EMBED} />
         <div>
@@ -186,7 +186,7 @@ export function Merchant() {
       </div>
       <div className="mt-20 rounded-[20px] bg-surface p-8 md:p-12 grid md:grid-cols-3 gap-8">
         {[
-          ['No keys in the browser', 'Try-on and model keys stay on the Elara server. The widget only talks to its own API.'],
+          ['No keys in the browser', 'Try-on and model keys stay on the Drape server. The widget only talks to its own API.'],
           ['Your cart, your checkout', 'Looks land in your existing cart with a “Styled with Ava” tag. Checkout is untouched.'],
           ['Shoppers own their data', 'Style DNA lives on a browser token. One tap downloads it, one tap forgets it.'],
         ].map(([h, b]) => (

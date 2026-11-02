@@ -4,8 +4,8 @@ export interface ElaraOpenOptions { tab?: 'chat' | 'studio' | 'crew'; productId?
 
 declare global {
   interface Window {
-    Elara?: { open: (o?: ElaraOpenOptions) => void; close: () => void; isOpen: () => boolean }
-    elaraAddToCart?: (items: CartItem[]) => void
+    Drape?: { open: (o?: ElaraOpenOptions) => void; close: () => void; isOpen: () => boolean }
+    drapeAddToCart?: (items: CartItem[]) => void
     __ELARA_SCRIPT__?: HTMLScriptElement | null
   }
 }

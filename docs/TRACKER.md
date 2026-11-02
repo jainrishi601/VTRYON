@@ -44,7 +44,7 @@ Test ids map to `docs/TEST_PLAN.md`: `U-*` are unit tests, `E2E-*` are browser t
 | # | Item | P | Check | Status |
 |---|---|---|---|---|
 | W1 | Vite app, store pages (home, listing, PDP, cart drawer), "Northline" brand | P0 | E2E-1 | done (11-01, E2E-1 desktop+mobile) |
-| W2 | `widget.js` build: Shadow DOM mount, script-tag embed, theming hook, `Elara.open` | P0 | E2E-1 | done (11-01, E2E-1: real `<script src="/widget.js">`, shadow root, hostile host CSS ignored) |
+| W2 | `widget.js` build: Shadow DOM mount, script-tag embed, theming hook, `Drape.open` | P0 | E2E-1 | done (11-01, E2E-1: real `<script src="/widget.js">`, shadow root, hostile host CSS ignored) |
 | W3 | Launcher + product-card "Try on me" chip | P0 | E2E-1, E2E-6 | done (11-01, E2E-1, E2E-6) |
 | W4 | Onboarding screen 1 (who / occasion / budget / optional) | P0 | E2E-2 | done (11-01, E2E-2) |
 | W5 | Onboarding screen 2 (upload / camera / sample model, client checks, consent) | P0 | E2E-2 | done (11-01, E2E-2; client type/size/4096px downscale checks, camera via capture) |

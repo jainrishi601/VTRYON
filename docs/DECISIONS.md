@@ -2,7 +2,7 @@
 
 | # | Decision | Chosen | Why / evidence |
 |---|---|---|---|
-| 1 | Product name | **Elara Commerce**; store "Northline"; stylist "Ava" | PRD default; fictional store avoids trademarks in the video |
+| 1 | Product name | **Drape** (was Elara Commerce; renamed 11-01 so the product has its own name); store "Northline"; stylist "Ava" | PRD default; fictional store avoids trademarks in the video |
 | 2 | Units per Clothes VTO call | **2 units** (verified; balance 1000 → 998 after one cloth-v4 call) | Budget ≈ 450 renders on one key |
 | 3 | cloth-v3 vs v4 | **cloth-v4** | Works on the hackathon key (14 s); adds `outer` for layers and `filter_multi_person` |
 | 4 | Catalogue source | **Nicobar export from Elara-B2B** (`catalog-export/`), about 500 SKUs, brand stripped | Already enriched (vibes, formality, fit, colour, pairing), INR, women+men, plain-background on-model images; no scraping needed |

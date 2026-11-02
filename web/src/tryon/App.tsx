@@ -102,7 +102,7 @@ function Shell({ me, path, onSignOut, children }: { me: User; path: string; onSi
   return (
     <div className="t-app min-h-screen bg-surface text-[15px] lg:flex">
       <aside className="hidden lg:flex w-[248px] shrink-0 flex-col px-5 py-6 sticky top-0 h-screen">
-        <div className="px-3 flex items-baseline gap-2"><Mark /><span className="label text-muted">by Elara</span></div>
+        <div className="px-3 flex items-baseline gap-2"><Mark /><span className="label text-muted">by Drape</span></div>
         <nav className="mt-10 space-y-0.5" aria-label="TRYON">
           {NAV.map(([to, label, Icon, id]) => (
             <a key={to} href={to} onClick={go(to)} data-testid={id} aria-current={active(to) ? 'page' : undefined}

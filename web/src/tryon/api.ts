@@ -105,4 +105,4 @@ export interface PlaySide { product: { id: string; title: string; image_url: str
 export interface PlayPair { id: string; dimension: string; label: string; context: string; question: string; answered: number; a: PlaySide; b: PlaySide }
 
 /** The store's stylist widget (same site, same shopper token). */
-export const stylist = () => (window as unknown as { Elara?: { open: (o: { message?: string; lookId?: string }) => void } }).Elara
+export const stylist = () => (window as unknown as { Drape?: { open: (o: { message?: string; lookId?: string }) => void } }).Drape

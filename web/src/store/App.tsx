@@ -247,7 +247,7 @@ function Footer() {
         {[
           ['Shop', [['Women', '/women'], ['Men', '/men'], ["Resort '26", '/resort']]],
           ['Help', [['Shipping', '/judge'], ['Returns', '/judge'], ['Size guide', '/judge']]],
-          ['Elara', [['Your style profile', '/tryon'], ['Judge guide', '/judge'], ['For merchants', '/merchant'], ['Render log', '/admin/renders']]],
+          ['Drape', [['Your style profile', '/tryon'], ['Judge guide', '/judge'], ['For merchants', '/merchant'], ['Render log', '/admin/renders']]],
         ].map(([h, links]) => (
           <div key={h as string}>
             <p className="label text-white/50 mb-4">{h as string}</p>
@@ -262,7 +262,7 @@ function Footer() {
         ))}
       </div>
       <div className="px-4 md:px-8 py-6 border-t border-white/10 text-[12px] text-white/40 flex flex-col md:flex-row gap-2 justify-between">
-        <span>© 2026 Northline. A demo store for Elara Commerce.</span>
+        <span>© 2026 Northline. A demo store for Drape.</span>
         <span>Prices in INR, inclusive of taxes.</span>
       </div>
     </footer>

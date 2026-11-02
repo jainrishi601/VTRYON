@@ -28,9 +28,9 @@ export function ProductCard({ p, eager }: { p: Product; eager?: boolean }) {
           <p className="num text-[14px] text-muted">{inr(p.price)}</p>
         </div>
       </Link>
-      {/* The widget binds every [data-elara-tryon] element: no store code needed beyond this attribute. */}
+      {/* The widget binds every [data-drape-tryon] element: no store code needed beyond this attribute. */}
       <button
-        data-elara-tryon={p.id}
+        data-drape-tryon={p.id}
         data-testid="try-on-chip"
         className="absolute left-3 bottom-[72px] h-8 px-3.5 rounded-full bg-ink text-white text-[12px] font-medium tracking-[0.02em] transition-all duration-150 opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 focus-visible:opacity-100 max-sm:h-7 max-sm:px-3 max-sm:text-[11px]"
       >

@@ -54,7 +54,7 @@ test('capture screens', async ({ page, request }, info) => {
   await shot('08-outfit-card')
 
   // The scripted demo look (cached renders): Studio tray → Try on → viewer → swap.
-  await page.evaluate(() => (window as any).Elara?.open({ tab: 'studio', productIds: ['nl-0099', 'nl-0125'] }))
+  await page.evaluate(() => (window as any).Drape?.open({ tab: 'studio', productIds: ['nl-0099', 'nl-0125'] }))
   await expect(w(page, 'tray-total')).toBeVisible()
   await shot('09-studio')
   await w(page, 'studio-tryon').click()
@@ -96,7 +96,7 @@ test('capture screens', async ({ page, request }, info) => {
     await ctx.close()
   } else {
     await page.getByTestId('cart-drawer').getByRole('button', { name: 'Close bag' }).click()
-    await page.evaluate(() => (window as any).Elara?.open({ tab: 'crew' }))
+    await page.evaluate(() => (window as any).Drape?.open({ tab: 'crew' }))
     await expect(w(page, 'crew-view')).toBeVisible()
     await expect(w(page, 'toast')).toBeHidden({ timeout: 8_000 })
     await shot('14-crew')

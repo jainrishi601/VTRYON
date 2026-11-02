@@ -1,4 +1,4 @@
-# CLAUDE.md — Elara Commerce (YouCam VTO Hackathon)
+# CLAUDE.md — Drape (YouCam VTO Hackathon)
 
 Agentic AI-stylist widget for any fashion store. One script tag. The shopper describes an occasion, an agent builds outfits from the store catalogue, and **YouCam Clothes VTO renders them on the shopper's photo**. The shopper can swap one piece, see a compatibility score, share with a Style Crew and add the look to the cart.
 
